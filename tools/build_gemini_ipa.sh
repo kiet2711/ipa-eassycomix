@@ -42,6 +42,7 @@ xcrun --sdk iphoneos clang \
   "$ROOT_DIR/EasyComixGemini.m" \
   -framework Foundation \
   -framework UIKit \
+  -framework CoreGraphics \
   -framework QuartzCore \
   -install_name '@rpath/EasyComixGemini.dylib' \
   -o "$DYLIB"
