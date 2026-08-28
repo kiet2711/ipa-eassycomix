@@ -206,6 +206,7 @@ static void AddFloatingButtonToWindow(void) {
 static void CallGeminiTranslation(NSArray *texts,
                                   NSString *srcLang,
                                   NSString *tgtLang,
+                                  NSString *userContext,
                                   NSUInteger attempt,
                                   NSUInteger maxTries,
                                   void (^completion)(NSArray *translatedTexts)) {
@@ -222,15 +223,19 @@ static void CallGeminiTranslation(NSArray *texts,
     NSError *error;
     NSData *textsJsonData = [NSJSONSerialization dataWithJSONObject:texts options:0 error:&error];
     NSString *textsJsonString = [[NSString alloc] initWithData:textsJsonData encoding:NSUTF8StringEncoding];
+    NSString *contextLine = [userContext isKindOfClass:[NSString class]] && [userContext length] > 0
+        ? [NSString stringWithFormat:@"\nNgữ cảnh truyện: %@\n", userContext]
+        : @"";
     
     NSString *prompt = [NSString stringWithFormat:
         @"Bạn là dịch giả truyện tranh chuyên nghiệp.\n"
         @"Hãy dịch danh sách các câu thoại sau từ ngôn ngữ '%@' sang '%@'.\n"
+        @"%@"
         @"Quy tắc:\n"
         @"- Dịch mượt mà, cảm xúc tự nhiên, đúng ngữ cảnh thoại truyện tranh.\n"
         @"- Trả về DUY NHẤT một JSON Array mảng chuỗi theo đúng thứ tự (ví dụ: [\"câu 1\", \"câu 2\"]).\n"
         @"- KHÔNG thêm bất kỳ markdown hoặc giải thích nào.\n\n"
-        @"Danh sách:\n%@", srcLang, tgtLang, textsJsonString];
+        @"Danh sách:\n%@", srcLang, tgtLang, contextLine, textsJsonString];
     
     NSDictionary *payload = @{
         @"contents": @[
@@ -273,7 +278,7 @@ static void CallGeminiTranslation(NSArray *texts,
         if ((isKeyOrModelError || netError) && attempt < maxTries - 1) {
             LOG(@"Lỗi gọi Gemini (HTTP %ld). Đang xoay sang Key tiếp theo để thử lại...", (long)statusCode);
             RotateToNextKey();
-            CallGeminiTranslation(texts, srcLang, tgtLang, attempt + 1, maxTries, completion);
+            CallGeminiTranslation(texts, srcLang, tgtLang, userContext, attempt + 1, maxTries, completion);
             return;
         }
         
@@ -325,9 +330,86 @@ static BOOL IsGeminiInterceptPath(NSURLRequest *request) {
     NSURL *url = request.URL;
     if (![[url.host lowercaseString] isEqualToString:@"api.easycomix.app"]) return NO;
     NSString *path = url.path ?: @"";
-    return [path isEqualToString:@"/api/v1/translate"] ||
-           [path isEqualToString:@"/api/v1/translate/quota"] ||
-           [path isEqualToString:@"/api/v1/translate/quota/config"];
+    // Classic và Live đều gọi /translate/chapter. So khớp theo prefix để
+    // NSURLSession async/await của Swift cũng được chuyển sang Gemini.
+    return [path hasPrefix:@"/api/v1/translate"];
+}
+
+static NSData *RequestBodyData(NSURLRequest *request) {
+    NSData *body = request.HTTPBody;
+    if (body.length > 0) return body;
+
+    NSInputStream *stream = request.HTTPBodyStream;
+    if (!stream) return nil;
+
+    NSMutableData *streamData = [NSMutableData data];
+    uint8_t buffer[8192];
+    [stream open];
+    while (YES) {
+        NSInteger count = [stream read:buffer maxLength:sizeof(buffer)];
+        if (count > 0) {
+            [streamData appendBytes:buffer length:(NSUInteger)count];
+        } else {
+            break;
+        }
+    }
+    [stream close];
+    return streamData.length > 0 ? streamData : nil;
+}
+
+static NSString *TranslationTextFromItem(id item) {
+    if ([item isKindOfClass:[NSString class]]) return item;
+    if (![item isKindOfClass:[NSDictionary class]]) return nil;
+
+    NSDictionary *dictionary = (NSDictionary *)item;
+    for (NSString *key in @[ @"text", @"recognizedText", @"sourceText", @"originalText" ]) {
+        id value = dictionary[key];
+        if ([value isKindOfClass:[NSString class]]) return value;
+    }
+
+    id recognizedTexts = dictionary[@"recognizedTexts"];
+    if ([recognizedTexts isKindOfClass:[NSArray class]]) {
+        NSMutableArray *parts = [NSMutableArray array];
+        for (id value in (NSArray *)recognizedTexts) {
+            if ([value isKindOfClass:[NSString class]]) [parts addObject:value];
+        }
+        if (parts.count > 0) return [parts componentsJoinedByString:@"\n"];
+    }
+    return nil;
+}
+
+static NSArray *TranslationTextsFromPayload(NSDictionary *payload) {
+    if (![payload isKindOfClass:[NSDictionary class]]) return nil;
+
+    id rawItems = payload[@"texts"];
+    if (![rawItems isKindOfClass:[NSArray class]]) rawItems = payload[@"bubbles"];
+    if (![rawItems isKindOfClass:[NSArray class]]) {
+        NSString *singleText = TranslationTextFromItem(payload[@"text"]);
+        return singleText.length > 0 ? @[ singleText ] : nil;
+    }
+
+    NSMutableArray *texts = [NSMutableArray array];
+    for (id item in (NSArray *)rawItems) {
+        NSString *text = TranslationTextFromItem(item);
+        if (text) [texts addObject:text];
+    }
+    return texts.count > 0 ? texts : nil;
+}
+
+static NSDictionary *TranslationPayloadFromBodyData(NSData *bodyData) {
+    if (bodyData.length == 0) return nil;
+    id body = [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil];
+    if (![body isKindOfClass:[NSDictionary class]]) return nil;
+    id nestedData = ((NSDictionary *)body)[@"data"];
+    return [nestedData isKindOfClass:[NSDictionary class]] ? nestedData : body;
+}
+
+static NSString *PayloadString(NSDictionary *payload, NSArray<NSString *> *keys, NSString *fallback) {
+    for (NSString *key in keys) {
+        id value = payload[key];
+        if ([value isKindOfClass:[NSString class]] && [value length] > 0) return value;
+    }
+    return fallback;
 }
 
 static NSDictionary *LocalQuotaResponse(void) {
@@ -368,25 +450,7 @@ static NSDictionary *LocalQuotaResponse(void) {
 }
 
 - (NSData *)requestBodyData {
-    NSData *body = self.request.HTTPBody;
-    if (body.length > 0) return body;
-
-    NSInputStream *stream = self.request.HTTPBodyStream;
-    if (!stream) return nil;
-
-    NSMutableData *streamData = [NSMutableData data];
-    uint8_t buffer[8192];
-    [stream open];
-    while (YES) {
-        NSInteger count = [stream read:buffer maxLength:sizeof(buffer)];
-        if (count > 0) {
-            [streamData appendBytes:buffer length:(NSUInteger)count];
-        } else {
-            break;
-        }
-    }
-    [stream close];
-    return streamData.length > 0 ? streamData : nil;
+    return RequestBodyData(self.request);
 }
 
 - (void)finishWithJSONObject:(NSDictionary *)object {
@@ -429,17 +493,14 @@ static NSDictionary *LocalQuotaResponse(void) {
     }
 
     NSData *bodyData = [self requestBodyData];
-    NSDictionary *body = bodyData ? [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil] : nil;
-    NSDictionary *payloadBody = [body[@"data"] isKindOfClass:[NSDictionary class]] ? body[@"data"] : body;
-    NSArray *texts = [payloadBody[@"texts"] isKindOfClass:[NSArray class]] ? payloadBody[@"texts"] : nil;
-    if (!texts && [payloadBody[@"text"] isKindOfClass:[NSString class]]) {
-        texts = @[ payloadBody[@"text"] ];
-    }
-    NSString *source = [payloadBody[@"sourceLanguage"] isKindOfClass:[NSString class]] ? payloadBody[@"sourceLanguage"] : @"auto";
-    NSString *target = [payloadBody[@"targetLanguage"] isKindOfClass:[NSString class]] ? payloadBody[@"targetLanguage"] : @"vi";
+    NSDictionary *payloadBody = TranslationPayloadFromBodyData(bodyData);
+    NSArray *texts = TranslationTextsFromPayload(payloadBody);
+    NSString *source = PayloadString(payloadBody, @[ @"sourceLanguage", @"sourceLang", @"srcLang" ], @"auto");
+    NSString *target = PayloadString(payloadBody, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
+    NSString *context = PayloadString(payloadBody, @[ @"userContext", @"storyContext", @"context" ], @"");
 
     if ([texts count] == 0) {
-        LOG(@"Không đọc được texts. bodyLength=%lu keys=%@", (unsigned long)bodyData.length, body.allKeys);
+        LOG(@"Không đọc được texts/bubbles. bodyLength=%lu keys=%@", (unsigned long)bodyData.length, payloadBody.allKeys);
         NSError *error = [NSError errorWithDomain:@"EasyComixGemini"
                                              code:1001
                                          userInfo:@{NSLocalizedDescriptionKey: @"Request dịch không có texts"}];
@@ -448,7 +509,7 @@ static NSDictionary *LocalQuotaResponse(void) {
     }
 
     NSUInteger keyCount = [GetGeminiKeyPool() count];
-    CallGeminiTranslation(texts, source, target, 0, MAX((NSUInteger)1, keyCount), ^(NSArray *translatedTexts) {
+    CallGeminiTranslation(texts, source, target, context, 0, MAX((NSUInteger)1, keyCount), ^(NSArray *translatedTexts) {
         [self finishWithJSONObject:@{
             @"success": @YES,
             @"data": @{ @"translations": translatedTexts },
@@ -574,18 +635,19 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
     if ([urlString containsString:@"api.easycomix.app"] && [urlString containsString:@"/translate"]) {
         LOG(@"Directly Hooked Translate Request: %@", urlString);
         
-        NSData *bodyData = request.HTTPBody;
+        NSData *bodyData = RequestBodyData(request);
         if (bodyData && completionHandler) {
-            NSDictionary *bodyJson = [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil];
-            NSArray *texts = bodyJson[@"texts"];
-            NSString *srcLang = bodyJson[@"sourceLanguage"] ?: @"auto";
-            NSString *tgtLang = bodyJson[@"targetLanguage"] ?: @"vi";
+            NSDictionary *bodyJson = TranslationPayloadFromBodyData(bodyData);
+            NSArray *texts = TranslationTextsFromPayload(bodyJson);
+            NSString *srcLang = PayloadString(bodyJson, @[ @"sourceLanguage", @"sourceLang", @"srcLang" ], @"auto");
+            NSString *tgtLang = PayloadString(bodyJson, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
+            NSString *context = PayloadString(bodyJson, @[ @"userContext", @"storyContext", @"context" ], @"");
             
             if (texts && [texts count] > 0) {
                 NSArray *keys = GetGeminiKeyPool();
                 NSUInteger maxTries = [keys count] > 0 ? [keys count] : 1;
                 
-                CallGeminiTranslation(texts, srcLang, tgtLang, 0, maxTries, ^(NSArray *translatedTexts) {
+                CallGeminiTranslation(texts, srcLang, tgtLang, context, 0, maxTries, ^(NSArray *translatedTexts) {
                     NSDictionary *finalRespDict = @{
                         @"success": @YES,
                         @"data": @{
