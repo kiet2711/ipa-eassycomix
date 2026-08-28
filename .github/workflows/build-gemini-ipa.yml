@@ -1,0 +1,32 @@
+name: Build EasyComix Gemini IPA
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate extracted app
+        run: |
+          test -f Payload/EasyComix.app/EasyComix
+          test -f Payload/EasyComix.app/Info.plist
+
+      - name: Build and inject Gemini tweak
+        run: bash tools/build_gemini_ipa.sh "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/EasyComix-Gemini-unsigned.ipa"
+
+      - name: Verify packaged files
+        run: |
+          unzip -l EasyComix-Gemini-unsigned.ipa | grep 'Payload/EasyComix.app/Frameworks/EasyComixGemini.dylib'
+          unzip -p EasyComix-Gemini-unsigned.ipa Payload/EasyComix.app/EasyComix > /tmp/EasyComix
+          otool -L /tmp/EasyComix | grep '@executable_path/Frameworks/EasyComixGemini.dylib'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EasyComix-Gemini-unsigned
+          path: EasyComix-Gemini-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

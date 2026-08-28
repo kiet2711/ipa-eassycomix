@@ -1,0 +1,76 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Float16",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32)",
+        "shortDescription" : "",
+        "shape" : "[]",
+        "name" : "prob_map",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Pad" : 3,
+      "Ios18.convTranspose" : 2,
+      "Ios18.conv" : 83,
+      "Ios18.relu" : 20,
+      "Ios18.gelu" : 13,
+      "Ios18.concat" : 2,
+      "Ios18.clip" : 13,
+      "Ios18.add" : 21,
+      "Ios18.maxPool" : 1,
+      "UpsampleNearestNeighbor" : 6,
+      "Ios16.reduceMean" : 13,
+      "Ios18.sigmoid" : 1,
+      "Ios18.cast" : 2,
+      "Ios18.mul" : 13
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-07-07",
+      "com.github.apple.coremltools.source" : "torch==2.8.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "dataType" : "Float32",
+        "hasShapeFlexibility" : "1",
+        "isOptional" : "0",
+        "shapeFlexibility" : "1 × 3 × 32...2048 × 32...2048",
+        "shapeRange" : "[[1, 1], [3, 3], [32, 2048], [32, 2048]]",
+        "formattedType" : "MultiArray (Float32 1 × 3 × 960 × 960)",
+        "type" : "MultiArray",
+        "shape" : "[1, 3, 960, 960]",
+        "name" : "x",
+        "shortDescription" : ""
+      }
+    ],
+    "generatedClassName" : "m8",
+    "method" : "predict"
+  }
+]

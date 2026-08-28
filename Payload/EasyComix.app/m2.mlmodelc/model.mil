@@ -1,0 +1,42 @@
+program(1.3)
+[buildInfo = dict<string, string>({{"coremlc-component-MIL", "3510.2.1"}, {"coremlc-version", "3500.32.1"}})]
+{
+    func main<ios18>(tensor<fp32, [1, 197, 768]> encoder_hidden_states) {
+            string encoder_hidden_states_to_fp16_dtype_0 = const()[name = string("encoder_hidden_states_to_fp16_dtype_0"), val = string("fp16")];
+            tensor<fp16, [768, 768]> keys_0_weight_to_fp16_palettized = constexpr_lut_to_dense(indices = tensor<uint6, [768, 768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(64))), lut = tensor<fp16, [48, 1, 64, 1]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(442496))))[name = string("keys_0_weight_to_fp16_palettized")];
+            tensor<fp16, [768]> keys_0_bias_to_fp16 = const()[name = string("keys_0_bias_to_fp16"), val = tensor<fp16, [768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(448704)))];
+            tensor<fp16, [1, 197, 768]> encoder_hidden_states_to_fp16 = cast(dtype = encoder_hidden_states_to_fp16_dtype_0, x = encoder_hidden_states)[name = string("cast_2")];
+            tensor<fp16, [1, 197, 768]> linear_0_cast_fp16 = linear(bias = keys_0_bias_to_fp16, weight = keys_0_weight_to_fp16_palettized, x = encoder_hidden_states_to_fp16)[name = string("linear_0_cast_fp16")];
+            tensor<int32, [4]> var_17 = const()[name = string("op_17"), val = tensor<int32, [4]>([1, -1, 12, 64])];
+            tensor<fp16, [1, 197, 12, 64]> var_18_cast_fp16 = reshape(shape = var_17, x = linear_0_cast_fp16)[name = string("op_18_cast_fp16")];
+            tensor<fp16, [768, 768]> keys_1_weight_to_fp16_palettized = constexpr_lut_to_dense(indices = tensor<uint6, [768, 768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(450304))), lut = tensor<fp16, [48, 1, 64, 1]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(892736))))[name = string("keys_1_weight_to_fp16_palettized")];
+            tensor<fp16, [768]> keys_1_bias_to_fp16 = const()[name = string("keys_1_bias_to_fp16"), val = tensor<fp16, [768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(898944)))];
+            tensor<fp16, [1, 197, 768]> linear_1_cast_fp16 = linear(bias = keys_1_bias_to_fp16, weight = keys_1_weight_to_fp16_palettized, x = encoder_hidden_states_to_fp16)[name = string("linear_1_cast_fp16")];
+            tensor<int32, [4]> var_32 = const()[name = string("op_32"), val = tensor<int32, [4]>([1, -1, 12, 64])];
+            tensor<fp16, [1, 197, 12, 64]> var_33_cast_fp16 = reshape(shape = var_32, x = linear_1_cast_fp16)[name = string("op_33_cast_fp16")];
+            tensor<fp16, [768, 768]> values_0_weight_to_fp16_palettized = constexpr_lut_to_dense(indices = tensor<uint6, [768, 768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(900544))), lut = tensor<fp16, [48, 1, 64, 1]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(1342976))))[name = string("values_0_weight_to_fp16_palettized")];
+            tensor<fp16, [768]> values_0_bias_to_fp16 = const()[name = string("values_0_bias_to_fp16"), val = tensor<fp16, [768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(1349184)))];
+            tensor<fp16, [1, 197, 768]> linear_2_cast_fp16 = linear(bias = values_0_bias_to_fp16, weight = values_0_weight_to_fp16_palettized, x = encoder_hidden_states_to_fp16)[name = string("linear_2_cast_fp16")];
+            tensor<int32, [4]> var_47 = const()[name = string("op_47"), val = tensor<int32, [4]>([1, -1, 12, 64])];
+            tensor<fp16, [1, 197, 12, 64]> var_48_cast_fp16 = reshape(shape = var_47, x = linear_2_cast_fp16)[name = string("op_48_cast_fp16")];
+            tensor<fp16, [768, 768]> values_1_weight_to_fp16_palettized = constexpr_lut_to_dense(indices = tensor<uint6, [768, 768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(1350784))), lut = tensor<fp16, [48, 1, 64, 1]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(1793216))))[name = string("values_1_weight_to_fp16_palettized")];
+            tensor<fp16, [768]> values_1_bias_to_fp16 = const()[name = string("values_1_bias_to_fp16"), val = tensor<fp16, [768]>(BLOBFILE(path = string("@model_path/weights/weight.bin"), offset = uint64(1799424)))];
+            tensor<fp16, [1, 197, 768]> linear_3_cast_fp16 = linear(bias = values_1_bias_to_fp16, weight = values_1_weight_to_fp16_palettized, x = encoder_hidden_states_to_fp16)[name = string("linear_3_cast_fp16")];
+            tensor<int32, [4]> var_62 = const()[name = string("op_62"), val = tensor<int32, [4]>([1, -1, 12, 64])];
+            tensor<fp16, [1, 197, 12, 64]> var_63_cast_fp16 = reshape(shape = var_62, x = linear_3_cast_fp16)[name = string("op_63_cast_fp16")];
+            bool var_72_interleave_0 = const()[name = string("op_72_interleave_0"), val = bool(false)];
+            int32 const_0 = const()[name = string("const_0"), val = int32(0)];
+            tensor<fp16, [2, 197, 12, 64]> _before_transpose_op_cross_k_cast_fp16 = concat(axis = const_0, interleave = var_72_interleave_0, values = (var_18_cast_fp16, var_33_cast_fp16))[name = string("_before_transpose_op_cross_k_cast_fp16")];
+            bool var_75_interleave_0 = const()[name = string("op_75_interleave_0"), val = bool(false)];
+            int32 const_1 = const()[name = string("const_1"), val = int32(0)];
+            tensor<fp16, [2, 197, 12, 64]> _before_transpose_op_cross_v_cast_fp16 = concat(axis = const_1, interleave = var_75_interleave_0, values = (var_48_cast_fp16, var_63_cast_fp16))[name = string("_before_transpose_op_cross_v_cast_fp16")];
+            tensor<int32, [4]> cross_k_perm_0 = const()[name = string("cross_k_perm_0"), val = tensor<int32, [4]>([0, 2, 1, 3])];
+            string cross_k_cast_fp16_to_fp32_dtype_0 = const()[name = string("cross_k_cast_fp16_to_fp32_dtype_0"), val = string("fp32")];
+            tensor<int32, [4]> cross_v_perm_0 = const()[name = string("cross_v_perm_0"), val = tensor<int32, [4]>([0, 2, 1, 3])];
+            string cross_v_cast_fp16_to_fp32_dtype_0 = const()[name = string("cross_v_cast_fp16_to_fp32_dtype_0"), val = string("fp32")];
+            tensor<fp16, [2, 12, 197, 64]> cross_k_cast_fp16 = transpose(perm = cross_k_perm_0, x = _before_transpose_op_cross_k_cast_fp16)[name = string("transpose_0")];
+            tensor<fp32, [2, 12, 197, 64]> cross_k = cast(dtype = cross_k_cast_fp16_to_fp32_dtype_0, x = cross_k_cast_fp16)[name = string("cast_0")];
+            tensor<fp16, [2, 12, 197, 64]> cross_v_cast_fp16 = transpose(perm = cross_v_perm_0, x = _before_transpose_op_cross_v_cast_fp16)[name = string("transpose_1")];
+            tensor<fp32, [2, 12, 197, 64]> cross_v = cast(dtype = cross_v_cast_fp16_to_fp32_dtype_0, x = cross_v_cast_fp16)[name = string("cast_1")];
+        } -> (cross_k, cross_v);
+}

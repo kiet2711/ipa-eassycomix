@@ -1,0 +1,146 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "storagePrecision" : "Mixed (Float16, Int32, Palettized (12 bits), Palettized (14 bits), Palettized (15 bits), Palettized (9 bits), UInt6)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1, 1]",
+        "name" : "next_token",
+        "type" : "MultiArray"
+      }
+    ],
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.softmax" : 4,
+      "Ios18.mul" : 17,
+      "Ios18.matmul" : 10,
+      "Ios18.equal" : 1,
+      "Ios18.greaterEqual" : 3,
+      "Select" : 2,
+      "Ios18.readState" : 12,
+      "Ios18.gather" : 2,
+      "Ios18.add" : 17,
+      "Ios18.layerNorm" : 8,
+      "Ios18.writeState" : 8,
+      "Ios18.reshape" : 14,
+      "Ios18.reduceArgmax" : 1,
+      "Ios18.constexprLutToDense" : 19,
+      "Ios18.linear" : 18,
+      "Ios18.gelu" : 3,
+      "Ios18.concat" : 2,
+      "Ios18.sub" : 1,
+      "Ios18.cast" : 9,
+      "Ios18.transpose" : 12,
+      "Ios18.sliceByIndex" : 8
+    },
+    "computePrecision" : "Mixed (Float16, Int16, Int32, UInt16)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_0",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_0",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_1",
+        "type" : "State"
+      },
+      {
+        "dataType" : "Float16",
+        "isOptional" : "0",
+        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_1",
+        "type" : "State"
+      }
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-07-03",
+      "com.github.apple.coremltools.source" : "torch==2.7.0",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1 × 1)",
+        "shortDescription" : "",
+        "shape" : "[1, 1]",
+        "name" : "token_id",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Int32",
+        "formattedType" : "MultiArray (Int32 1)",
+        "shortDescription" : "",
+        "shape" : "[1]",
+        "name" : "position",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 12 × 197 × 64)",
+        "shortDescription" : "",
+        "shape" : "[2, 12, 197, 64]",
+        "name" : "cross_k",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 2 × 12 × 197 × 64)",
+        "shortDescription" : "",
+        "shape" : "[2, 12, 197, 64]",
+        "name" : "cross_v",
+        "type" : "MultiArray"
+      }
+    ],
+    "generatedClassName" : "m3",
+    "method" : "predict"
+  }
+]

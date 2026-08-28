@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Decrypted</key>
+	<string>Decrypted by Dell</string>
+	<key>UIStoryboardDesignatedEntryPointIdentifier</key>
+	<string>UIViewController-Y6W-OH-hqX</string>
+	<key>UIStoryboardVersion</key>
+	<integer>1</integer>
+	<key>UIViewControllerIdentifiersToNibNames</key>
+	<dict>
+		<key>UIViewController-Y6W-OH-hqX</key>
+		<string>UIViewController-Y6W-OH-hqX</string>
+	</dict>
+</dict>
+</plist>

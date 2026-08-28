@@ -1,0 +1,87 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "AOT-GAN manga inpainting (ogkalu\/aot-inpainting). image: RGB [0,1] CHW; mask: 1=text\/inpaint. Output: composited RGB [0,1].",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 3 × 512 × 512)",
+        "shortDescription" : "",
+        "shape" : "[1, 3, 512, 512]",
+        "name" : "output",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Mixed (Float16, Int8)",
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.mul" : 67,
+      "Ios18.square" : 10,
+      "Ios18.conv" : 72,
+      "Ios18.sub" : 32,
+      "Ios18.relu" : 46,
+      "Ios18.convTranspose" : 4,
+      "Ios18.clip" : 2,
+      "Ios18.concat" : 11,
+      "Ios18.sigmoid" : 18,
+      "Ios18.add" : 22,
+      "Ios18.realDiv" : 10,
+      "Ios16.reduceMean" : 20,
+      "Ios18.cast" : 1,
+      "Ios18.constexprBlockwiseShiftScale" : 72,
+      "Ios18.sqrt" : 10,
+      "Pad" : 66
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 3 × 512 × 512)",
+        "shortDescription" : "",
+        "shape" : "[1, 3, 512, 512]",
+        "name" : "image",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 1 × 512 × 512)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 512, 512]",
+        "name" : "mask",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-07-05",
+      "com.github.apple.coremltools.source" : "torch==2.12.1",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "m7",
+    "method" : "predict"
+  }
+]

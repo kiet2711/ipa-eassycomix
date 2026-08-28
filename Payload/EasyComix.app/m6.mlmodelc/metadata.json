@@ -1,0 +1,73 @@
+[
+  {
+    "metadataOutputVersion" : "3.0",
+    "shortDescription" : "Comic text detector - seg mask only (1024x1024 text probability)",
+    "outputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 1 × 1024 × 1024)",
+        "shortDescription" : "",
+        "shape" : "[1, 1, 1024, 1024]",
+        "name" : "seg",
+        "type" : "MultiArray"
+      }
+    ],
+    "storagePrecision" : "Mixed (Float16, Int8)",
+    "modelParameters" : [
+
+    ],
+    "specificationVersion" : 9,
+    "mlProgramOperationTypeHistogram" : {
+      "Ios18.convTranspose" : 6,
+      "Ios18.conv" : 63,
+      "Ios18.leakyRelu" : 30,
+      "Ios18.relu" : 5,
+      "Ios18.concat" : 15,
+      "Ios18.sigmoid" : 1,
+      "Ios18.add" : 13,
+      "Ios18.maxPool" : 3,
+      "Ios18.silu" : 33,
+      "Ios18.avgPool" : 1,
+      "Ios18.cast" : 2,
+      "Ios18.constexprBlockwiseShiftScale" : 65
+    },
+    "computePrecision" : "Mixed (Float16, Float32, Int32)",
+    "isUpdatable" : "0",
+    "stateSchema" : [
+
+    ],
+    "availability" : {
+      "macOS" : "15.0",
+      "tvOS" : "18.0",
+      "visionOS" : "2.0",
+      "watchOS" : "11.0",
+      "iOS" : "18.0",
+      "macCatalyst" : "18.0"
+    },
+    "modelType" : {
+      "name" : "MLModelType_mlProgram"
+    },
+    "inputSchema" : [
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float32",
+        "formattedType" : "MultiArray (Float32 1 × 3 × 1024 × 1024)",
+        "shortDescription" : "",
+        "shape" : "[1, 3, 1024, 1024]",
+        "name" : "images",
+        "type" : "MultiArray"
+      }
+    ],
+    "userDefinedMetadata" : {
+      "com.github.apple.coremltools.conversion_date" : "2026-07-05",
+      "com.github.apple.coremltools.source" : "torch==2.12.1",
+      "com.github.apple.coremltools.version" : "9.0",
+      "com.github.apple.coremltools.source_dialect" : "TorchScript"
+    },
+    "generatedClassName" : "m6",
+    "method" : "predict"
+  }
+]

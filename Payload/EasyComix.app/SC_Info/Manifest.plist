@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>SinfPaths</key>
+	<array>
+		<string>SC_Info/EasyComix.sinf</string>
+	</array>
+	<key>SinfReplicationPaths</key>
+	<array>
+		<string>Frameworks/AppAuth.framework/SC_Info/AppAuth.sinf</string>
+		<string>Frameworks/AppCheckCore.framework/SC_Info/AppCheckCore.sinf</string>
+		<string>Frameworks/FBLPromises.framework/SC_Info/FBLPromises.sinf</string>
+		<string>Frameworks/GTMAppAuth.framework/SC_Info/GTMAppAuth.sinf</string>
+		<string>Frameworks/GTMSessionFetcher.framework/SC_Info/GTMSessionFetcher.sinf</string>
+		<string>Frameworks/GoogleSignIn.framework/SC_Info/GoogleSignIn.sinf</string>
+		<string>Frameworks/GoogleUtilities.framework/SC_Info/GoogleUtilities.sinf</string>
+		<string>Frameworks/RevenueCat.framework/SC_Info/RevenueCat.sinf</string>
+		<string>Frameworks/SSZipArchive.framework/SC_Info/SSZipArchive.sinf</string>
+		<string>SC_Info/EasyComix.sinf</string>
+	</array>
+</dict>
+</plist>
