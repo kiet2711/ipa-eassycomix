@@ -326,25 +326,26 @@ static BOOL IsGeminiInterceptPath(NSURLRequest *request) {
     if (![[url.host lowercaseString] isEqualToString:@"api.easycomix.app"]) return NO;
     NSString *path = url.path ?: @"";
     return [path isEqualToString:@"/api/v1/translate"] ||
-           [path isEqualToString:@"/api/v1/translate/quota"];
+           [path isEqualToString:@"/api/v1/translate/quota"] ||
+           [path isEqualToString:@"/api/v1/translate/quota/config"];
 }
 
 static NSDictionary *LocalQuotaResponse(void) {
     return @{
         @"success": @YES,
         @"data": @{
-            @"tier": @"gemini",
+            @"tier": @"free",
             @"remaining": @999999,
             @"resetAt": @"2099-01-01T00:00:00.000Z"
         },
         @"meta": @{
             @"quota": @{
-                @"tier": @"gemini",
+                @"tier": @"free",
                 @"remaining": @999999,
                 @"resetAt": @"2099-01-01T00:00:00.000Z"
             },
             @"liveQuota": @{
-                @"tier": @"gemini",
+                @"tier": @"free",
                 @"remaining": @999999,
                 @"resetAt": @"2099-01-01T00:00:00.000Z"
             }
@@ -381,6 +382,24 @@ static NSDictionary *LocalQuotaResponse(void) {
 - (void)startLoading {
     NSString *path = self.request.URL.path ?: @"";
     LOG(@"NSURLProtocol intercepted: %@", path);
+
+    if ([path isEqualToString:@"/api/v1/translate/quota/config"]) {
+        [self finishWithJSONObject:@{
+            @"success": @YES,
+            @"data": @{
+                @"tiers": @{
+                    @"trial": @{ @"maxCalls": @999999 },
+                    @"free": @{ @"maxCalls": @999999 },
+                    @"pro": @{ @"maxCalls": @999999 }
+                },
+                @"live": @{
+                    @"free": @{ @"maxCalls": @999999 },
+                    @"pro": @{ @"maxCalls": @999999 }
+                }
+            }
+        }];
+        return;
+    }
 
     if ([path isEqualToString:@"/api/v1/translate/quota"]) {
         [self finishWithJSONObject:LocalQuotaResponse()];
