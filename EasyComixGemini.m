@@ -367,6 +367,28 @@ static NSDictionary *LocalQuotaResponse(void) {
     return request;
 }
 
+- (NSData *)requestBodyData {
+    NSData *body = self.request.HTTPBody;
+    if (body.length > 0) return body;
+
+    NSInputStream *stream = self.request.HTTPBodyStream;
+    if (!stream) return nil;
+
+    NSMutableData *streamData = [NSMutableData data];
+    uint8_t buffer[8192];
+    [stream open];
+    while (YES) {
+        NSInteger count = [stream read:buffer maxLength:sizeof(buffer)];
+        if (count > 0) {
+            [streamData appendBytes:buffer length:(NSUInteger)count];
+        } else {
+            break;
+        }
+    }
+    [stream close];
+    return streamData.length > 0 ? streamData : nil;
+}
+
 - (void)finishWithJSONObject:(NSDictionary *)object {
     if (self.ecStopped) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
@@ -406,13 +428,18 @@ static NSDictionary *LocalQuotaResponse(void) {
         return;
     }
 
-    NSData *bodyData = self.request.HTTPBody;
+    NSData *bodyData = [self requestBodyData];
     NSDictionary *body = bodyData ? [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil] : nil;
-    NSArray *texts = [body[@"texts"] isKindOfClass:[NSArray class]] ? body[@"texts"] : nil;
-    NSString *source = [body[@"sourceLanguage"] isKindOfClass:[NSString class]] ? body[@"sourceLanguage"] : @"auto";
-    NSString *target = [body[@"targetLanguage"] isKindOfClass:[NSString class]] ? body[@"targetLanguage"] : @"vi";
+    NSDictionary *payloadBody = [body[@"data"] isKindOfClass:[NSDictionary class]] ? body[@"data"] : body;
+    NSArray *texts = [payloadBody[@"texts"] isKindOfClass:[NSArray class]] ? payloadBody[@"texts"] : nil;
+    if (!texts && [payloadBody[@"text"] isKindOfClass:[NSString class]]) {
+        texts = @[ payloadBody[@"text"] ];
+    }
+    NSString *source = [payloadBody[@"sourceLanguage"] isKindOfClass:[NSString class]] ? payloadBody[@"sourceLanguage"] : @"auto";
+    NSString *target = [payloadBody[@"targetLanguage"] isKindOfClass:[NSString class]] ? payloadBody[@"targetLanguage"] : @"vi";
 
     if ([texts count] == 0) {
+        LOG(@"Không đọc được texts. bodyLength=%lu keys=%@", (unsigned long)bodyData.length, body.allKeys);
         NSError *error = [NSError errorWithDomain:@"EasyComixGemini"
                                              code:1001
                                          userInfo:@{NSLocalizedDescriptionKey: @"Request dịch không có texts"}];
