@@ -318,6 +318,135 @@ static void CallGeminiTranslation(NSArray *texts,
 }
 
 // =========================================================================
+// NSURLPROTOCOL: BẮT CẢ URLSESSION ASYNC/AWAIT CỦA SWIFT
+// =========================================================================
+
+static BOOL IsGeminiInterceptPath(NSURLRequest *request) {
+    NSURL *url = request.URL;
+    if (![[url.host lowercaseString] isEqualToString:@"api.easycomix.app"]) return NO;
+    NSString *path = url.path ?: @"";
+    return [path isEqualToString:@"/api/v1/translate"] ||
+           [path isEqualToString:@"/api/v1/translate/quota"];
+}
+
+static NSDictionary *LocalQuotaResponse(void) {
+    return @{
+        @"success": @YES,
+        @"data": @{
+            @"tier": @"gemini",
+            @"remaining": @999999,
+            @"resetAt": @"2099-01-01T00:00:00.000Z"
+        },
+        @"meta": @{
+            @"quota": @{
+                @"tier": @"gemini",
+                @"remaining": @999999,
+                @"resetAt": @"2099-01-01T00:00:00.000Z"
+            },
+            @"liveQuota": @{
+                @"tier": @"gemini",
+                @"remaining": @999999,
+                @"resetAt": @"2099-01-01T00:00:00.000Z"
+            }
+        }
+    };
+}
+
+@interface EasyComixGeminiURLProtocol : NSURLProtocol
+@property (atomic, assign) BOOL ecStopped;
+@end
+
+@implementation EasyComixGeminiURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    return IsGeminiInterceptPath(request);
+}
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)finishWithJSONObject:(NSDictionary *)object {
+    if (self.ecStopped) return;
+    NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
+    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
+                                                             statusCode:200
+                                                            HTTPVersion:@"HTTP/1.1"
+                                                           headerFields:@{ @"Content-Type": @"application/json; charset=utf-8" }];
+    [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
+    [self.client URLProtocol:self didLoadData:data];
+    [self.client URLProtocolDidFinishLoading:self];
+}
+
+- (void)startLoading {
+    NSString *path = self.request.URL.path ?: @"";
+    LOG(@"NSURLProtocol intercepted: %@", path);
+
+    if ([path isEqualToString:@"/api/v1/translate/quota"]) {
+        [self finishWithJSONObject:LocalQuotaResponse()];
+        return;
+    }
+
+    NSData *bodyData = self.request.HTTPBody;
+    NSDictionary *body = bodyData ? [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil] : nil;
+    NSArray *texts = [body[@"texts"] isKindOfClass:[NSArray class]] ? body[@"texts"] : nil;
+    NSString *source = [body[@"sourceLanguage"] isKindOfClass:[NSString class]] ? body[@"sourceLanguage"] : @"auto";
+    NSString *target = [body[@"targetLanguage"] isKindOfClass:[NSString class]] ? body[@"targetLanguage"] : @"vi";
+
+    if ([texts count] == 0) {
+        NSError *error = [NSError errorWithDomain:@"EasyComixGemini"
+                                             code:1001
+                                         userInfo:@{NSLocalizedDescriptionKey: @"Request dịch không có texts"}];
+        [self.client URLProtocol:self didFailWithError:error];
+        return;
+    }
+
+    NSUInteger keyCount = [GetGeminiKeyPool() count];
+    CallGeminiTranslation(texts, source, target, 0, MAX((NSUInteger)1, keyCount), ^(NSArray *translatedTexts) {
+        [self finishWithJSONObject:@{
+            @"success": @YES,
+            @"data": @{ @"translations": translatedTexts },
+            @"meta": LocalQuotaResponse()[@"meta"]
+        }];
+    });
+}
+
+- (void)stopLoading {
+    self.ecStopped = YES;
+}
+
+@end
+
+
+static void PrependGeminiProtocol(NSURLSessionConfiguration *configuration) {
+    if (!configuration) return;
+    NSArray *existing = configuration.protocolClasses ?: @[];
+    if ([existing containsObject:[EasyComixGeminiURLProtocol class]]) return;
+    configuration.protocolClasses = [@[ [EasyComixGeminiURLProtocol class] ] arrayByAddingObjectsFromArray:existing];
+}
+
+@interface NSURLSessionConfiguration (EasyComixGeminiConfig)
++ (NSURLSessionConfiguration *)ec_defaultSessionConfiguration;
++ (NSURLSessionConfiguration *)ec_ephemeralSessionConfiguration;
+@end
+
+@implementation NSURLSessionConfiguration (EasyComixGeminiConfig)
+
++ (NSURLSessionConfiguration *)ec_defaultSessionConfiguration {
+    NSURLSessionConfiguration *configuration = [self ec_defaultSessionConfiguration];
+    PrependGeminiProtocol(configuration);
+    return configuration;
+}
+
++ (NSURLSessionConfiguration *)ec_ephemeralSessionConfiguration {
+    NSURLSessionConfiguration *configuration = [self ec_ephemeralSessionConfiguration];
+    PrependGeminiProtocol(configuration);
+    return configuration;
+}
+
+@end
+
+// =========================================================================
 // METHOD SWIZZLING TRỰC TIẾP TRÊN NSURLSESSION
 // =========================================================================
 
@@ -327,6 +456,10 @@ static void SwizzleMethod(Class cls, SEL origSel, SEL newSel) {
     if (origMethod && newMethod) {
         method_exchangeImplementations(origMethod, newMethod);
     }
+}
+
+static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
+    SwizzleMethod(object_getClass(cls), origSel, newSel);
 }
 
 @interface NSURLSession (EasyComixDirectHook)
@@ -481,6 +614,14 @@ static void InitEasyComixGeminiHook(void) {
     SwizzleMethod([NSURLSession class],
                   @selector(dataTaskWithRequest:completionHandler:),
                   @selector(hook_dataTaskWithRequest:completionHandler:));
+
+    [NSURLProtocol registerClass:[EasyComixGeminiURLProtocol class]];
+    SwizzleClassMethod([NSURLSessionConfiguration class],
+                       @selector(defaultSessionConfiguration),
+                       @selector(ec_defaultSessionConfiguration));
+    SwizzleClassMethod([NSURLSessionConfiguration class],
+                       @selector(ephemeralSessionConfiguration),
+                       @selector(ec_ephemeralSessionConfiguration));
                   
     SwizzleMethod([UIViewController class],
                   @selector(viewDidAppear:),
