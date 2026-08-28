@@ -4,11 +4,12 @@
 #import <objc/runtime.h>
 
 /**
- * EasyComix Gemini Tweak (Dylib) - Direct NSURLSession Swizzling
- * Tự động xóa sạch Cache Quota cũ khi khởi động app
- * Bắt toàn diện mọi endpoint Quota, Live Quota, Single Translate & Chapter Translate
- * Cho phép chọn: gemini-2.5-flash-lite hoặc gemini-3.5-flash-lite
- * Mặc định: gemini-2.5-flash-lite
+ * EasyComix Gemini Tweak (Dylib)
+ * - Chặn toàn diện 100% request dịch (Dịch Classic Chapter & Dịch Live Scroll/Paged) chuyển qua Gemini API
+ * - Mở khóa vĩnh viễn hạn mức PRO (999,999 lượt cho cả Dịch thường & Dịch Live)
+ * - Tự động tái tạo JSON đúng 100% theo kiểu Swift Decodable của EasyComix
+ * - Tự động xoay Key khi gặp lỗi Rate Limit (HTTP 429) hoặc lỗi Key
+ * - Tùy chọn 2 model: gemini-2.5-flash-lite và gemini-3.5-flash-lite
  */
 
 #define LOG(fmt, ...) NSLog(@"[EasyComixGemini] " fmt, ##__VA_ARGS__)
@@ -17,6 +18,7 @@ static NSString *const kGeminiKeysPref  = @"EasyComix_Gemini_Key_Pool";
 static NSString *const kGeminiModelPref = @"EasyComix_Gemini_Model_Name";
 static NSString *const kGemini25Model   = @"gemini-2.5-flash-lite";
 static NSString *const kGemini35Model   = @"gemini-3.5-flash-lite";
+
 static NSUInteger sCurrentKeyIndex = 0;
 
 // =========================================================================
@@ -29,7 +31,7 @@ static NSArray<NSString *> *GetGeminiKeyPool(void) {
         return [NSArray array];
     }
     
-    NSArray *components = [rawKeys componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n,"]];
+    NSArray *components = [rawKeys componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n,;"]];
     NSMutableArray *validKeys = [NSMutableArray array];
     
     for (NSString *k in components) {
@@ -57,7 +59,9 @@ static void RotateToNextKey(void) {
 
 static NSString *GetSavedGeminiModel(void) {
     NSString *model = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiModelPref];
-    if ([model isEqualToString:kGemini35Model]) return kGemini35Model;
+    if ([model isEqualToString:kGemini35Model]) {
+        return kGemini35Model;
+    }
     return kGemini25Model;
 }
 
@@ -68,7 +72,7 @@ static void SaveGeminiSettings(NSString *rawKeys, NSString *model) {
     [[NSUserDefaults standardUserDefaults] setObject:safeModel forKey:kGeminiModelPref];
     [[NSUserDefaults standardUserDefaults] synchronize];
     sCurrentKeyIndex = 0;
-    LOG(@"Đã cập nhật cấu hình: %lu keys, model: %@", (unsigned long)[GetGeminiKeyPool() count], safeModel);
+    LOG(@"Đã lưu cấu hình: %lu keys, model: %@", (unsigned long)[GetGeminiKeyPool() count], safeModel);
 }
 
 // =========================================================================
@@ -93,14 +97,14 @@ static void ShowGeminiSettingsPopup(void) {
         NSArray *currentKeys = GetGeminiKeyPool();
         NSString *currentKeysText = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiKeysPref] ?: @"";
         NSString *activeModel = GetSavedGeminiModel();
-        NSString *message = [NSString stringWithFormat:@"Đang có %lu key. Model hiện tại: %@\nDán nhiều key, phân cách bằng dấu phẩy hoặc xuống dòng.", (unsigned long)[currentKeys count], activeModel];
+        NSString *message = [NSString stringWithFormat:@"Đang có %lu API key.\nModel đang dùng: %@\nDán nhiều key, phân cách bằng dấu phẩy hoặc xuống dòng để tự động xoay key khi quá tải.", (unsigned long)[currentKeys count], activeModel];
         
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🤖 Gemini Key Pool & Model"
                                                                        message:message
                                                                 preferredStyle:UIAlertControllerStyleAlert];
         
         [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
-            textField.placeholder = @"AIza... , AIza...";
+            textField.placeholder = @"Dán Gemini API Key (AIzaSy...)";
             textField.text = currentKeysText;
             textField.clearButtonMode = UITextFieldViewModeWhileEditing;
             textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
@@ -129,7 +133,6 @@ static void ShowGeminiSettingsPopup(void) {
         UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Đóng"
                                                                style:UIAlertActionStyleCancel
                                                              handler:nil];
-        
         [alert addAction:cancelAction];
         
         [topVC presentViewController:alert animated:YES completion:nil];
@@ -144,14 +147,14 @@ static void ShowGeminiSettingsPopup(void) {
 
 - (instancetype)initWithFrame:(CGRect)frame {
     if (self = [super initWithFrame:frame]) {
-        self.backgroundColor = [UIColor colorWithRed:0.1 green:0.55 blue:1.0 alpha:0.9];
+        self.backgroundColor = [UIColor colorWithRed:0.08 green:0.52 blue:1.0 alpha:0.92];
         [self setTitle:@"🤖 Key" forState:UIControlStateNormal];
         self.titleLabel.font = [UIFont boldSystemFontOfSize:13];
         self.layer.cornerRadius = frame.size.width / 2.0;
         self.layer.shadowColor = [UIColor blackColor].CGColor;
         self.layer.shadowOffset = CGSizeMake(0, 2);
         self.layer.shadowRadius = 4;
-        self.layer.shadowOpacity = 0.3;
+        self.layer.shadowOpacity = 0.35;
         self.clipsToBounds = NO;
         
         [self addTarget:self action:@selector(buttonTapped) forControlEvents:UIControlEventTouchUpInside];
@@ -177,7 +180,7 @@ static void ShowGeminiSettingsPopup(void) {
 static void AddFloatingButtonToWindow(void) {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             UIWindow *keyWindow = nil;
             for (UIWindow *w in [UIApplication sharedApplication].windows) {
                 if ([w isKeyWindow]) {
@@ -187,7 +190,7 @@ static void AddFloatingButtonToWindow(void) {
             }
             if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
             if (keyWindow) {
-                GeminiFloatingButton *btn = [[GeminiFloatingButton alloc] initWithFrame:CGRectMake(20, 150, 50, 50)];
+                GeminiFloatingButton *btn = [[GeminiFloatingButton alloc] initWithFrame:CGRectMake(16, 160, 52, 52)];
                 [keyWindow addSubview:btn];
                 [keyWindow bringSubviewToFront:btn];
                 
@@ -203,13 +206,18 @@ static void AddFloatingButtonToWindow(void) {
 // GỌI GOOGLE GEMINI REST API
 // =========================================================================
 
-static void CallGeminiTranslation(NSArray *texts,
+static void CallGeminiTranslation(NSArray<NSString *> *texts,
                                   NSString *srcLang,
                                   NSString *tgtLang,
                                   NSString *userContext,
                                   NSUInteger attempt,
                                   NSUInteger maxTries,
-                                  void (^completion)(NSArray *translatedTexts)) {
+                                  void (^completion)(NSArray<NSString *> *translatedTexts)) {
+    
+    if (!texts || [texts count] == 0) {
+        completion(@[]);
+        return;
+    }
     
     NSString *currentKey = GetActiveGeminiKey();
     NSString *model = GetSavedGeminiModel();
@@ -220,22 +228,24 @@ static void CallGeminiTranslation(NSArray *texts,
         return;
     }
     
-    NSError *error;
+    NSError *error = nil;
     NSData *textsJsonData = [NSJSONSerialization dataWithJSONObject:texts options:0 error:&error];
     NSString *textsJsonString = [[NSString alloc] initWithData:textsJsonData encoding:NSUTF8StringEncoding];
-    NSString *contextLine = [userContext isKindOfClass:[NSString class]] && [userContext length] > 0
+    NSString *contextLine = ([userContext isKindOfClass:[NSString class]] && [userContext length] > 0)
         ? [NSString stringWithFormat:@"\nNgữ cảnh truyện: %@\n", userContext]
         : @"";
     
     NSString *prompt = [NSString stringWithFormat:
-        @"Bạn là dịch giả truyện tranh chuyên nghiệp.\n"
+        @"Bạn là dịch giả truyện tranh / manga / webtoon chuyên nghiệp.\n"
         @"Hãy dịch danh sách các câu thoại sau từ ngôn ngữ '%@' sang '%@'.\n"
         @"%@"
-        @"Quy tắc:\n"
-        @"- Dịch mượt mà, cảm xúc tự nhiên, đúng ngữ cảnh thoại truyện tranh.\n"
+        @"Quy tắc dịch:\n"
+        @"- Dịch văn phong tự nhiên, cảm xúc, chuẩn ngữ cảnh thoại truyện tranh.\n"
         @"- Trả về DUY NHẤT một JSON Array mảng chuỗi theo đúng thứ tự (ví dụ: [\"câu 1\", \"câu 2\"]).\n"
-        @"- KHÔNG thêm bất kỳ markdown hoặc giải thích nào.\n\n"
-        @"Danh sách:\n%@", srcLang, tgtLang, contextLine, textsJsonString];
+        @"- Số phần tử trong mảng kết quả BẮT BUỘC phải bằng đúng %lu.\n"
+        @"- KHÔNG thêm bất kỳ markdown hoặc giải thích nào khác.\n\n"
+        @"Danh sách cần dịch:\n%@",
+        srcLang, tgtLang, contextLine, (unsigned long)[texts count], textsJsonString];
     
     NSDictionary *payload = @{
         @"contents": @[
@@ -269,14 +279,14 @@ static void CallGeminiTranslation(NSArray *texts,
     
     [[session dataTaskWithRequest:geminiReq completionHandler:^(NSData *data, NSURLResponse *response, NSError *netError) {
         NSHTTPURLResponse *httpResponse = (NSHTTPURLResponse *)response;
-        NSInteger statusCode = httpResponse.statusCode;
+        NSInteger statusCode = httpResponse ? httpResponse.statusCode : 0;
         
         LOG(@"Gemini (%@) response status: %ld", model, (long)statusCode);
         
         BOOL isKeyOrModelError = (statusCode == 429 || statusCode == 400 || statusCode == 401 || statusCode == 403 || statusCode == 404);
         
         if ((isKeyOrModelError || netError) && attempt < maxTries - 1) {
-            LOG(@"Lỗi gọi Gemini (HTTP %ld). Đang xoay sang Key tiếp theo để thử lại...", (long)statusCode);
+            LOG(@"Lỗi gọi Gemini (HTTP %ld). Đang xoay sang Key tiếp theo...", (long)statusCode);
             RotateToNextKey();
             CallGeminiTranslation(texts, srcLang, tgtLang, userContext, attempt + 1, maxTries, completion);
             return;
@@ -305,35 +315,38 @@ static void CallGeminiTranslation(NSArray *texts,
                 
                 NSData *cleanData = [cleanText dataUsingEncoding:NSUTF8StringEncoding];
                 id parsed = [NSJSONSerialization JSONObjectWithData:cleanData options:0 error:nil];
-                if ([parsed isKindOfClass:[NSArray class]] && [(NSArray *)parsed count] == [texts count]) {
+                if ([parsed isKindOfClass:[NSArray class]]) {
                     translatedList = (NSArray *)parsed;
+                } else if ([parsed isKindOfClass:[NSDictionary class]]) {
+                    NSDictionary *pDict = (NSDictionary *)parsed;
+                    for (NSString *k in @[@"translations", @"result", @"data", @"translated_texts"]) {
+                        if ([pDict[k] isKindOfClass:[NSArray class]]) {
+                            translatedList = (NSArray *)pDict[k];
+                            break;
+                        }
+                    }
                 }
             }
         }
         
-        if (!translatedList || [translatedList count] == 0) {
-            LOG(@"Không parse được bản dịch từ Gemini, trả về text gốc.");
-            translatedList = texts;
-        } else {
-            LOG(@"Dịch thành công %lu câu bằng Gemini (%@)!", (unsigned long)[translatedList count], model);
+        // Ghép bản dịch đảm bảo đủ số lượng phần tử của texts
+        NSMutableArray<NSString *> *finalResult = [NSMutableArray array];
+        for (NSUInteger i = 0; i < [texts count]; i++) {
+            if (translatedList && i < [translatedList count] && [translatedList[i] isKindOfClass:[NSString class]]) {
+                [finalResult addObject:translatedList[i]];
+            } else {
+                [finalResult addObject:texts[i]];
+            }
         }
         
-        completion(translatedList);
+        LOG(@"Dịch hoàn tất %lu câu bằng Gemini (%@)!", (unsigned long)[finalResult count], model);
+        completion(finalResult);
     }] resume];
 }
 
 // =========================================================================
-// NSURLPROTOCOL: BẮT CẢ URLSESSION ASYNC/AWAIT CỦA SWIFT
+// TIỆN ÍCH PHÂN TÍCH REQUEST BODY & TẠO RESPONSE QUOTA PRO VĨNH VIỄN
 // =========================================================================
-
-static BOOL IsGeminiInterceptPath(NSURLRequest *request) {
-    NSURL *url = request.URL;
-    if (![[url.host lowercaseString] isEqualToString:@"api.easycomix.app"]) return NO;
-    NSString *path = url.path ?: @"";
-    // Classic và Live đều gọi /translate/chapter. So khớp theo prefix để
-    // NSURLSession async/await của Swift cũng được chuyển sang Gemini.
-    return [path hasPrefix:@"/api/v1/translate"];
-}
 
 static NSData *RequestBodyData(NSURLRequest *request) {
     NSData *body = request.HTTPBody;
@@ -357,45 +370,6 @@ static NSData *RequestBodyData(NSURLRequest *request) {
     return streamData.length > 0 ? streamData : nil;
 }
 
-static NSString *TranslationTextFromItem(id item) {
-    if ([item isKindOfClass:[NSString class]]) return item;
-    if (![item isKindOfClass:[NSDictionary class]]) return nil;
-
-    NSDictionary *dictionary = (NSDictionary *)item;
-    for (NSString *key in @[ @"text", @"recognizedText", @"sourceText", @"originalText" ]) {
-        id value = dictionary[key];
-        if ([value isKindOfClass:[NSString class]]) return value;
-    }
-
-    id recognizedTexts = dictionary[@"recognizedTexts"];
-    if ([recognizedTexts isKindOfClass:[NSArray class]]) {
-        NSMutableArray *parts = [NSMutableArray array];
-        for (id value in (NSArray *)recognizedTexts) {
-            if ([value isKindOfClass:[NSString class]]) [parts addObject:value];
-        }
-        if (parts.count > 0) return [parts componentsJoinedByString:@"\n"];
-    }
-    return nil;
-}
-
-static NSArray *TranslationTextsFromPayload(NSDictionary *payload) {
-    if (![payload isKindOfClass:[NSDictionary class]]) return nil;
-
-    id rawItems = payload[@"texts"];
-    if (![rawItems isKindOfClass:[NSArray class]]) rawItems = payload[@"bubbles"];
-    if (![rawItems isKindOfClass:[NSArray class]]) {
-        NSString *singleText = TranslationTextFromItem(payload[@"text"]);
-        return singleText.length > 0 ? @[ singleText ] : nil;
-    }
-
-    NSMutableArray *texts = [NSMutableArray array];
-    for (id item in (NSArray *)rawItems) {
-        NSString *text = TranslationTextFromItem(item);
-        if (text) [texts addObject:text];
-    }
-    return texts.count > 0 ? texts : nil;
-}
-
 static NSDictionary *TranslationPayloadFromBodyData(NSData *bodyData) {
     if (bodyData.length == 0) return nil;
     id body = [NSJSONSerialization JSONObjectWithData:bodyData options:0 error:nil];
@@ -412,27 +386,199 @@ static NSString *PayloadString(NSDictionary *payload, NSArray<NSString *> *keys,
     return fallback;
 }
 
-static NSDictionary *LocalQuotaResponse(void) {
+static NSString *ExtractTextFromBubble(id item) {
+    if ([item isKindOfClass:[NSString class]]) return (NSString *)item;
+    if ([item isKindOfClass:[NSDictionary class]]) {
+        NSDictionary *d = (NSDictionary *)item;
+        for (NSString *k in @[@"text", @"originalText", @"sourceText", @"recognizedText"]) {
+            if ([d[k] isKindOfClass:[NSString class]] && [d[k] length] > 0) {
+                return d[k];
+            }
+        }
+    }
+    return @"";
+}
+
+/**
+ * Cấu trúc Response Quota PRO chuẩn theo đúng Decodable của Swift EasyComix:
+ * QuotaUsageResponse: { quota: QuotaInfo, liveQuota: QuotaInfo }
+ * QuotaInfo: { tier: "pro", remaining: 999999, resetAt: null }
+ */
+static NSDictionary *ProQuotaInfoDict(void) {
+    return @{
+        @"tier": @"pro",
+        @"remaining": @999999,
+        @"resetAt": [NSNull null]
+    };
+}
+
+static NSDictionary *ProQuotaUsageResponse(void) {
     return @{
         @"success": @YES,
         @"data": @{
-            @"tier": @"free",
-            @"remaining": @999999,
-            @"resetAt": @"2099-01-01T00:00:00.000Z"
+            @"quota": ProQuotaInfoDict(),
+            @"liveQuota": ProQuotaInfoDict()
         },
         @"meta": @{
-            @"quota": @{
-                @"tier": @"free",
-                @"remaining": @999999,
-                @"resetAt": @"2099-01-01T00:00:00.000Z"
+            @"quota": ProQuotaInfoDict()
+        }
+    };
+}
+
+static NSDictionary *ProQuotaConfigResponse(void) {
+    return @{
+        @"success": @YES,
+        @"data": @{
+            @"tiers": @{
+                @"free": @{ @"maxCalls": @999999 },
+                @"trial": @{ @"maxCalls": @999999 },
+                @"pro": @{ @"maxCalls": @999999 }
             },
-            @"liveQuota": @{
-                @"tier": @"free",
-                @"remaining": @999999,
-                @"resetAt": @"2099-01-01T00:00:00.000Z"
+            @"live": @{
+                @"free": @{ @"maxCalls": @999999 },
+                @"pro": @{ @"maxCalls": @999999 }
             }
         }
     };
+}
+
+// Xử lý và tạo Response Dịch thuật cho cả Live và Classic
+static void ProcessTranslatePayload(NSDictionary *payload, void (^completion)(NSDictionary *responseObject)) {
+    NSString *source = PayloadString(payload, @[ @"sourceLanguage", @"sourceLang", @"srcLang" ], @"auto");
+    NSString *target = PayloadString(payload, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
+    NSString *userContext = PayloadString(payload, @[ @"userContext", @"storyContext", @"context" ], @"");
+    
+    // A. DỊCH LIVE (hoặc Chapter Backend) gửi mảng 'bubbles' [{ "id": 0, "text": "..." }]
+    id rawBubbles = payload[@"bubbles"];
+    if ([rawBubbles isKindOfClass:[NSArray class]]) {
+        NSArray *bubbles = (NSArray *)rawBubbles;
+        if ([bubbles count] == 0) {
+            completion(@{
+                @"success": @YES,
+                @"data": @{
+                    @"translations": @[],
+                    @"context": userContext ?: @""
+                },
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+            return;
+        }
+        
+        NSMutableArray<NSString *> *textsToTranslate = [NSMutableArray array];
+        for (id item in bubbles) {
+            NSString *t = ExtractTextFromBubble(item);
+            [textsToTranslate addObject:t];
+        }
+        
+        NSUInteger keyCount = [GetGeminiKeyPool() count];
+        CallGeminiTranslation(textsToTranslate, source, target, userContext, 0, MAX((NSUInteger)1, keyCount), ^(NSArray<NSString *> *translatedTexts) {
+            NSMutableArray *translatedItems = [NSMutableArray array];
+            for (NSUInteger i = 0; i < [bubbles count]; i++) {
+                id item = bubbles[i];
+                NSNumber *bubbleId = @(i);
+                if ([item isKindOfClass:[NSDictionary class]] && item[@"id"] != nil) {
+                    bubbleId = @([item[@"id"] longLongValue]);
+                }
+                NSString *transText = (i < [translatedTexts count]) ? translatedTexts[i] : @"";
+                if ([transText length] == 0) {
+                    transText = ExtractTextFromBubble(item);
+                }
+                [translatedItems addObject:@{
+                    @"id": bubbleId,
+                    @"text": transText ?: @""
+                }];
+            }
+            
+            NSMutableDictionary *dataDict = [NSMutableDictionary dictionary];
+            dataDict[@"translations"] = translatedItems;
+            if ([userContext length] > 0) {
+                dataDict[@"context"] = userContext;
+            }
+            
+            completion(@{
+                @"success": @YES,
+                @"data": dataDict,
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+        });
+        return;
+    }
+
+    // B. DỊCH CLASSIC / SINGLE PAGE / CHAPTER: gửi mảng 'texts' ["câu 1", "câu 2"]
+    id rawTexts = payload[@"texts"];
+    if ([rawTexts isKindOfClass:[NSArray class]]) {
+        NSArray *texts = (NSArray *)rawTexts;
+        if ([texts count] == 0) {
+            completion(@{
+                @"success": @YES,
+                @"data": @{
+                    @"translations": @[]
+                },
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+            return;
+        }
+        
+        NSMutableArray<NSString *> *textsToTranslate = [NSMutableArray array];
+        for (id item in texts) {
+            NSString *t = ExtractTextFromBubble(item);
+            [textsToTranslate addObject:t];
+        }
+        
+        NSUInteger keyCount = [GetGeminiKeyPool() count];
+        CallGeminiTranslation(textsToTranslate, source, target, userContext, 0, MAX((NSUInteger)1, keyCount), ^(NSArray<NSString *> *translatedTexts) {
+            completion(@{
+                @"success": @YES,
+                @"data": @{
+                    @"translations": translatedTexts ?: @[]
+                },
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+        });
+        return;
+    }
+
+    // C. SINGLE TEXT:
+    NSString *singleText = payload[@"text"] ?: @"";
+    if ([singleText length] > 0) {
+        NSUInteger keyCount = [GetGeminiKeyPool() count];
+        CallGeminiTranslation(@[ singleText ], source, target, userContext, 0, MAX((NSUInteger)1, keyCount), ^(NSArray<NSString *> *translatedTexts) {
+            completion(@{
+                @"success": @YES,
+                @"data": @{
+                    @"translations": translatedTexts ?: @[]
+                },
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+        });
+        return;
+    }
+
+    // D. FALLBACK RỖNG
+    completion(@{
+        @"success": @YES,
+        @"data": @{
+            @"translations": @[]
+        },
+        @"meta": @{ @"quota": ProQuotaInfoDict() }
+    });
+}
+
+// =========================================================================
+// NSURLPROTOCOL: INTERCEPT MỌI REQUEST CỦA EASYCOMIX
+// =========================================================================
+
+static NSString *const kEasyComixProtocolHandledKey = @"EasyComixGeminiProtocolHandled";
+
+static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
+    if ([NSURLProtocol propertyForKey:kEasyComixProtocolHandledKey inRequest:request]) {
+        return NO;
+    }
+    NSURL *url = request.URL;
+    if (![[url.host lowercaseString] isEqualToString:@"api.easycomix.app"]) {
+        return NO;
+    }
+    return YES;
 }
 
 @interface EasyComixGeminiURLProtocol : NSURLProtocol
@@ -442,24 +588,23 @@ static NSDictionary *LocalQuotaResponse(void) {
 @implementation EasyComixGeminiURLProtocol
 
 + (BOOL)canInitWithRequest:(NSURLRequest *)request {
-    return IsGeminiInterceptPath(request);
+    return IsGeminiInterceptRequest(request);
 }
 
 + (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
     return request;
 }
 
-- (NSData *)requestBodyData {
-    return RequestBodyData(self.request);
-}
-
 - (void)finishWithJSONObject:(NSDictionary *)object {
     if (self.ecStopped) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
-                                                             statusCode:200
-                                                            HTTPVersion:@"HTTP/1.1"
-                                                           headerFields:@{ @"Content-Type": @"application/json; charset=utf-8" }];
+                                                              statusCode:200
+                                                             HTTPVersion:@"HTTP/1.1"
+                                                            headerFields:@{
+                                                                @"Content-Type": @"application/json; charset=utf-8",
+                                                                @"Access-Control-Allow-Origin": @"*"
+                                                            }];
     [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     [self.client URLProtocol:self didLoadData:data];
     [self.client URLProtocolDidFinishLoading:self];
@@ -469,53 +614,54 @@ static NSDictionary *LocalQuotaResponse(void) {
     NSString *path = self.request.URL.path ?: @"";
     LOG(@"NSURLProtocol intercepted: %@", path);
 
+    // 1. Cấu hình hạn mức (Quota Config)
     if ([path isEqualToString:@"/api/v1/translate/quota/config"]) {
+        [self finishWithJSONObject:ProQuotaConfigResponse()];
+        return;
+    }
+
+    // 2. Hạn mức hiện tại (Quota Usage)
+    if ([path isEqualToString:@"/api/v1/translate/quota"]) {
+        [self finishWithJSONObject:ProQuotaUsageResponse()];
+        return;
+    }
+
+    // 3. Quy tắc chặn quảng cáo (Ad Rules)
+    if ([path isEqualToString:@"/api/v1/config/ad-rules"]) {
         [self finishWithJSONObject:@{
             @"success": @YES,
             @"data": @{
-                @"tiers": @{
-                    @"trial": @{ @"maxCalls": @999999 },
-                    @"free": @{ @"maxCalls": @999999 },
-                    @"pro": @{ @"maxCalls": @999999 }
-                },
-                @"live": @{
-                    @"free": @{ @"maxCalls": @999999 },
-                    @"pro": @{ @"maxCalls": @999999 }
-                }
+                @"version": @1,
+                @"rules": @[]
             }
         }];
         return;
     }
 
-    if ([path isEqualToString:@"/api/v1/translate/quota"]) {
-        [self finishWithJSONObject:LocalQuotaResponse()];
-        return;
-    }
-
-    NSData *bodyData = [self requestBodyData];
-    NSDictionary *payloadBody = TranslationPayloadFromBodyData(bodyData);
-    NSArray *texts = TranslationTextsFromPayload(payloadBody);
-    NSString *source = PayloadString(payloadBody, @[ @"sourceLanguage", @"sourceLang", @"srcLang" ], @"auto");
-    NSString *target = PayloadString(payloadBody, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
-    NSString *context = PayloadString(payloadBody, @[ @"userContext", @"storyContext", @"context" ], @"");
-
-    if ([texts count] == 0) {
-        LOG(@"Không đọc được texts/bubbles. bodyLength=%lu keys=%@", (unsigned long)bodyData.length, payloadBody.allKeys);
-        NSError *error = [NSError errorWithDomain:@"EasyComixGemini"
-                                             code:1001
-                                         userInfo:@{NSLocalizedDescriptionKey: @"Request dịch không có texts"}];
-        [self.client URLProtocol:self didFailWithError:error];
-        return;
-    }
-
-    NSUInteger keyCount = [GetGeminiKeyPool() count];
-    CallGeminiTranslation(texts, source, target, context, 0, MAX((NSUInteger)1, keyCount), ^(NSArray *translatedTexts) {
+    // 4. Sự kiện ghé thăm trang (Events)
+    if ([path containsString:@"/events/"]) {
         [self finishWithJSONObject:@{
             @"success": @YES,
-            @"data": @{ @"translations": translatedTexts },
-            @"meta": LocalQuotaResponse()[@"meta"]
+            @"data": @{}
         }];
-    });
+        return;
+    }
+
+    // 5. Endpoint dịch thuật (/api/v1/translate, /api/v1/translate/chapter,...)
+    if ([path hasPrefix:@"/api/v1/translate"]) {
+        NSData *bodyData = RequestBodyData(self.request);
+        NSDictionary *payload = TranslationPayloadFromBodyData(bodyData);
+        ProcessTranslatePayload(payload, ^(NSDictionary *responseObject) {
+            [self finishWithJSONObject:responseObject];
+        });
+        return;
+    }
+
+    // Các request khác đến api.easycomix.app
+    [self finishWithJSONObject:@{
+        @"success": @YES,
+        @"data": @{}
+    }];
 }
 
 - (void)stopLoading {
@@ -524,12 +670,27 @@ static NSDictionary *LocalQuotaResponse(void) {
 
 @end
 
+// =========================================================================
+// SWIZZLE TẤT CẢ CÁC CÁCH KHỞI TẠO NSURLSESSION TRONG SWIFT & OBJC
+// =========================================================================
 
 static void PrependGeminiProtocol(NSURLSessionConfiguration *configuration) {
     if (!configuration) return;
     NSArray *existing = configuration.protocolClasses ?: @[];
     if ([existing containsObject:[EasyComixGeminiURLProtocol class]]) return;
     configuration.protocolClasses = [@[ [EasyComixGeminiURLProtocol class] ] arrayByAddingObjectsFromArray:existing];
+}
+
+static void SwizzleMethod(Class cls, SEL origSel, SEL newSel) {
+    Method origMethod = class_getInstanceMethod(cls, origSel);
+    Method newMethod = class_getInstanceMethod(cls, newSel);
+    if (origMethod && newMethod) {
+        method_exchangeImplementations(origMethod, newMethod);
+    }
+}
+
+static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
+    SwizzleMethod(object_getClass(cls), origSel, newSel);
 }
 
 @interface NSURLSessionConfiguration (EasyComixGeminiConfig)
@@ -553,143 +714,6 @@ static void PrependGeminiProtocol(NSURLSessionConfiguration *configuration) {
 
 @end
 
-// =========================================================================
-// METHOD SWIZZLING TRỰC TIẾP TRÊN NSURLSESSION
-// =========================================================================
-
-static void SwizzleMethod(Class cls, SEL origSel, SEL newSel) {
-    Method origMethod = class_getInstanceMethod(cls, origSel);
-    Method newMethod = class_getInstanceMethod(cls, newSel);
-    if (origMethod && newMethod) {
-        method_exchangeImplementations(origMethod, newMethod);
-    }
-}
-
-static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
-    SwizzleMethod(object_getClass(cls), origSel, newSel);
-}
-
-@interface NSURLSession (EasyComixDirectHook)
-@end
-
-@implementation NSURLSession (EasyComixDirectHook)
-
-- (NSURLSessionDataTask *)hook_dataTaskWithRequest:(NSURLRequest *)request
-                                completionHandler:(void (^)(NSData * _Nullable data, NSURLResponse * _Nullable response, NSError * _Nullable error))completionHandler {
-    
-    NSString *urlString = request.URL.absoluteString;
-    
-    // 1. Chặn Endpoint Quota (GET/POST /api/v1/translate/quota)
-    if ([urlString containsString:@"api.easycomix.app"] &&
-        [urlString containsString:@"/quota"] &&
-        ![urlString containsString:@"/quota/config"]) {
-        
-        LOG(@"Directly Hooked Quota Request: %@", urlString);
-        if (completionHandler) {
-            NSDictionary *fakeQuota = @{
-                @"success": @YES,
-                @"data": @{
-                    @"tier": @"free",
-                    @"remaining": @999999,
-                    @"resetAt": @"2099-01-01T00:00:00.000Z",
-                    @"quota": @{
-                        @"tier": @"free",
-                        @"remaining": @999999,
-                        @"resetAt": @"2099-01-01T00:00:00.000Z"
-                    },
-                    @"liveQuota": @{
-                        @"tier": @"free",
-                        @"remaining": @999999,
-                        @"resetAt": @"2099-01-01T00:00:00.000Z"
-                    }
-                },
-                @"meta": @{
-                    @"quota": @{
-                        @"tier": @"free",
-                        @"remaining": @999999,
-                        @"resetAt": @"2099-01-01T00:00:00.000Z"
-                    },
-                    @"liveQuota": @{
-                        @"tier": @"free",
-                        @"remaining": @999999,
-                        @"resetAt": @"2099-01-01T00:00:00.000Z"
-                    }
-                }
-            };
-            NSData *data = [NSJSONSerialization dataWithJSONObject:fakeQuota options:0 error:nil];
-            NSHTTPURLResponse *fakeResp = [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                                                      statusCode:200
-                                                                     HTTPVersion:@"HTTP/1.1"
-                                                                    headerFields:@{
-                                                                        @"Content-Type": @"application/json; charset=utf-8",
-                                                                        @"Access-Control-Allow-Origin": @"*"
-                                                                    }];
-            dispatch_async(dispatch_get_main_queue(), ^{
-                completionHandler(data, fakeResp, nil);
-            });
-        }
-        return [self hook_dataTaskWithRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]] completionHandler:nil];
-    }
-    
-    // 2. Chặn Endpoint Dịch thuật (/api/v1/translate và /translate/chapter)
-    if ([urlString containsString:@"api.easycomix.app"] && [urlString containsString:@"/translate"]) {
-        LOG(@"Directly Hooked Translate Request: %@", urlString);
-        
-        NSData *bodyData = RequestBodyData(request);
-        if (bodyData && completionHandler) {
-            NSDictionary *bodyJson = TranslationPayloadFromBodyData(bodyData);
-            NSArray *texts = TranslationTextsFromPayload(bodyJson);
-            NSString *srcLang = PayloadString(bodyJson, @[ @"sourceLanguage", @"sourceLang", @"srcLang" ], @"auto");
-            NSString *tgtLang = PayloadString(bodyJson, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
-            NSString *context = PayloadString(bodyJson, @[ @"userContext", @"storyContext", @"context" ], @"");
-            
-            if (texts && [texts count] > 0) {
-                NSArray *keys = GetGeminiKeyPool();
-                NSUInteger maxTries = [keys count] > 0 ? [keys count] : 1;
-                
-                CallGeminiTranslation(texts, srcLang, tgtLang, context, 0, maxTries, ^(NSArray *translatedTexts) {
-                    NSDictionary *finalRespDict = @{
-                        @"success": @YES,
-                        @"data": @{
-                            @"translations": translatedTexts
-                        },
-                        @"meta": @{
-                            @"quota": @{
-                                @"tier": @"free",
-                                @"remaining": @999999,
-                                @"resetAt": @"2099-01-01T00:00:00.000Z"
-                            },
-                            @"liveQuota": @{
-                                @"tier": @"free",
-                                @"remaining": @999999,
-                                @"resetAt": @"2099-01-01T00:00:00.000Z"
-                            }
-                        }
-                    };
-                    
-                    NSData *resData = [NSJSONSerialization dataWithJSONObject:finalRespDict options:0 error:nil];
-                    NSHTTPURLResponse *fakeResp = [[NSHTTPURLResponse alloc] initWithURL:request.URL
-                                                                              statusCode:200
-                                                                             HTTPVersion:@"HTTP/1.1"
-                                                                            headerFields:@{
-                                                                                @"Content-Type": @"application/json; charset=utf-8",
-                                                                                @"Access-Control-Allow-Origin": @"*"
-                                                                            }];
-                    dispatch_async(dispatch_get_main_queue(), ^{
-                        completionHandler(resData, fakeResp, nil);
-                    });
-                });
-                
-                return [self hook_dataTaskWithRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"about:blank"]] completionHandler:nil];
-            }
-        }
-    }
-    
-    return [self hook_dataTaskWithRequest:request completionHandler:completionHandler];
-}
-
-@end
-
 @interface UIViewController (EasyComixHook)
 @end
 
@@ -703,27 +727,26 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
 @end
 
 // =========================================================================
-// KHỞI TẠO TWEAK & XÓA CACHE QUOTA CŨ
+// KHỞI TẠO TWEAK: GỠ BỎ GIỚI HẠN & KÍCH HOẠT PRO VĨNH VIỄN
 // =========================================================================
 
 __attribute__((constructor))
 static void InitEasyComixGeminiHook(void) {
-    LOG(@"EasyComix Gemini Direct Hook initialized. Model: %@", GetSavedGeminiModel());
+    LOG(@"EasyComix Gemini PRO Hook initialized. Model: %@", GetSavedGeminiModel());
     
     // Tự động xóa cache hạn mức cũ trong UserDefaults của app
     NSDictionary *defaultsDict = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];
     for (NSString *key in [defaultsDict allKeys]) {
-        if ([key containsString:@"quota"] || [key containsString:@"Quota"] || [key containsString:@"limit"]) {
+        if ([key containsString:@"quota"] || [key containsString:@"Quota"] || [key containsString:@"limit"] || [key containsString:@"Tier"]) {
             [[NSUserDefaults standardUserDefaults] removeObjectForKey:key];
         }
     }
     [[NSUserDefaults standardUserDefaults] synchronize];
     
-    SwizzleMethod([NSURLSession class],
-                  @selector(dataTaskWithRequest:completionHandler:),
-                  @selector(hook_dataTaskWithRequest:completionHandler:));
-
+    // Đăng ký NSURLProtocol
     [NSURLProtocol registerClass:[EasyComixGeminiURLProtocol class]];
+    
+    // Swizzle các hàm tạo session configuration
     SwizzleClassMethod([NSURLSessionConfiguration class],
                        @selector(defaultSessionConfiguration),
                        @selector(ec_defaultSessionConfiguration));
@@ -731,6 +754,7 @@ static void InitEasyComixGeminiHook(void) {
                        @selector(ephemeralSessionConfiguration),
                        @selector(ec_ephemeralSessionConfiguration));
                   
+    // Gắn nút cài đặt nổi trên UI
     SwizzleMethod([UIViewController class],
                   @selector(viewDidAppear:),
                   @selector(hook_viewDidAppear:));

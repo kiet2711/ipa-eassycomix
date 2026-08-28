@@ -8,6 +8,7 @@ Tweak chặn request dịch của EasyComix, gửi mảng câu sang Gemini rồi
 - `gemini-3.5-flash-lite` — chỉ hoạt động nếu Gemini API thực sự cung cấp model này cho API key/tài khoản của bạn.
 
 Nhấn nút nổi **🤖 Key**, nhập một hoặc nhiều Gemini API key (phân cách bằng dấu phẩy hoặc xuống dòng), rồi nhấn model muốn dùng. API key và model được lưu trong UserDefaults của app.
+Tweak tự động giả lập gói **PRO vĩnh viễn** (999,999 lượt cho cả Dịch Chapter thường và Dịch Live).
 
 ## Build bằng GitHub Actions
 
