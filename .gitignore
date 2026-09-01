@@ -1,0 +1,7 @@
+*.zip
+*.ipa
+extracted_*
+sandbox_data
+.DS_Store
+__MACOSX
+*.log
