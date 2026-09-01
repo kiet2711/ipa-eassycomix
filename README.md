@@ -18,19 +18,20 @@
 ## ✨ Tính năng nổi bật
 
 - 🤖 **Dịch thuật bằng Google Gemini**:
-  - `gemini-2.5-flash-lite` *(mặc định — tốc độ cao, dịch mượt mà)*.
-  - `gemini-3.5-flash-lite` *(tùy chọn model nâng cao)*.
+  - `gemini-3.5-flash-lite` *(mặc định — thế hệ mới, dịch chuẩn ngữ cảnh thoại truyện tranh)*.
+  - `gemini-3.1-flash-lite` *(tùy chọn tốc độ cao)*.
   - Tự động chuẩn hóa văn phong dịch truyện tranh, manga, manhwa, webtoon tự nhiên và giàu cảm xúc.
-- 🔄 **Hệ thống Multi-Key (Key Pool) & Auto-Rotate**:
-  - Nhập nhiều Gemini API Key cùng lúc (phân tách bằng dấu phẩy `,` hoặc xuống dòng).
-  - Tự động chuyển sang key tiếp theo khi gặp lỗi `429 (Too Many Requests)` hoặc lỗi kết nối.
+- 🔄 **Hệ thống Multi-Key (Key Pool) & Auto-Rotate tối ưu**:
+  - Nhập nhiều Gemini API Key cùng lúc (tự động phân tích theo xuống dòng, phẩy, chấm phẩy, khoảng trắng, định dạng JSON/Text).
+  - Tự động lọc sạch ký tự thừa, xóa key trùng lặp (Deduplicate) và đếm số lượng key hợp lệ theo thời gian thực.
+  - Tự động xoay vòng key và thử lại ngay lập tức khi một key chạm giới hạn `429 (Too Many Requests)` hoặc lỗi kết nối.
 - 💎 **Mở khóa PRO vĩnh viễn**:
   - Giả lập phản hồi RevenueCat và Backend Quota: **999,999 lượt** cho cả Dịch thường và Dịch Live.
   - Vô hiệu hóa quảng cáo (`ad-rules`).
   - Tự động bỏ qua các màn hình popup chặn đăng nhập/mua gói (`PaywallView`, `TrialFlow`, `LoginView`).
-- 🔘 **Giao diện Nút nổi (Floating Button)**:
+- 🔘 **Giao diện Cài đặt Chuyên nghiệp & Nút nổi**:
   - Nút **🤖 Key** tiện lợi có thể kéo thả bất kỳ đâu trên màn hình.
-  - Cho phép thay đổi danh sách API Key và chuyển đổi Model trực tiếp trong app mà không cần khởi động lại.
+  - Popup cài đặt dạng Card hiện đại với `UITextView` nhiều dòng, nút **📋 Dán Clipboard**, **🧹 Dọn dẹp Key**, **🗑️ Xóa hết**, bộ chọn model và nút lưu cấu hình trực quan.
 - ⚡ **Hỗ trợ Apple Shortcut**:
   - Tích hợp phím tắt iOS để hỗ trợ chụp ảnh màn hình và dịch truyện nhanh.
 
@@ -103,14 +104,16 @@ Do file IPA xuất ra là bản **Unsigned** (chưa ký), bạn cần ký lại 
 1. Mở ứng dụng EasyComix đã cài đặt.
 2. Lần đầu mở app (hoặc bấm vào nút nổi **🤖 Key** màu xanh trên màn hình), popup cài đặt sẽ hiển thị.
 3. Dán một hoặc nhiều **Google Gemini API Key** (lấy miễn phí tại [Google AI Studio](https://aistudio.google.com/app/apikey)):
+   - Hỗ trợ dán trực tiếp bằng nút **📋 Dán Clipboard**.
+   - Bấm nút **🧹 Dọn dẹp Key** để tự động chuẩn hóa và loại bỏ key trùng lặp.
    ```text
    AIzaSyA1234567890...
    AIzaSyB0987654321...
    ```
 4. Chọn model mong muốn:
-   - **Gemini 2.5 Flash Lite**: Model ổn định, tốc độ phản hồi nhanh nhất.
-   - **Gemini 3.5 Flash Lite**: Model mới hơn (cần kiểm tra hỗ trợ trên tài khoản API của bạn).
-5. Bấm chọn model để lưu. Sau đó bạn có thể thưởng thức đọc và dịch truyện không giới hạn!
+   - **Gemini 3.5 Flash Lite**: Mặc định — thế hệ mới, dịch chuẩn ngữ cảnh thoại truyện tranh.
+   - **Gemini 3.1 Flash Lite**: Tùy chọn tốc độ cao.
+5. Bấm **💾 Lưu cấu hình**. Sau đó bạn có thể thưởng thức đọc và dịch truyện không giới hạn!
 
 ---
 
@@ -135,7 +138,7 @@ Do file IPA xuất ra là bản **Unsigned** (chưa ký), bạn cần ký lại 
 
 ## ⚠️ Lưu ý & Xử lý sự cố
 
-- **Lỗi HTTP 404 khi dịch**: Nếu chọn `gemini-3.5-flash-lite` và gặp lỗi 404, hãy bấm nút **🤖 Key** và chuyển lại sang `gemini-2.5-flash-lite`.
+- **Lỗi HTTP 404 khi dịch**: Nếu chọn model 3.5 và gặp lỗi 404, hãy bấm nút **🤖 Key** và chuyển về `gemini-3.1-flash-lite`.
 - **Lỗi HTTP 429 (Quá tải rate limit)**: Thêm từ 2–3 API key vào ô nhập để tweak tự động xoay vòng key khi gọi API.
 - **Yêu cầu iOS**: Ứng dụng yêu cầu thiết bị chạy **iOS 18.0 trở lên** giống phiên bản gốc.
 - **Bảo mật**: Không chia sẻ file IPA đã đóng gói có chứa sẵn API Key cá nhân của bạn ra bên ngoài.

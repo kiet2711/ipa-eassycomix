@@ -9,15 +9,15 @@
  * - Mở khóa vĩnh viễn hạn mức PRO (999,999 lượt cho cả Dịch thường & Dịch Live)
  * - Tự động tái tạo JSON đúng 100% theo kiểu Swift Decodable của EasyComix
  * - Tự động xoay Key khi gặp lỗi Rate Limit (HTTP 429) hoặc lỗi Key
- * - Tùy chọn 2 model: gemini-2.5-flash-lite và gemini-3.5-flash-lite
+ * - Tùy chọn model: gemini-3.5-flash-lite (mặc định), gemini-3.1-flash-lite
  */
 
 #define LOG(fmt, ...) NSLog(@"[EasyComixGemini] " fmt, ##__VA_ARGS__)
 
 static NSString *const kGeminiKeysPref  = @"EasyComix_Gemini_Key_Pool";
 static NSString *const kGeminiModelPref = @"EasyComix_Gemini_Model_Name";
-static NSString *const kGemini25Model   = @"gemini-2.5-flash-lite";
-static NSString *const kGemini35Model   = @"gemini-3.5-flash-lite";
+static NSString *const kGemini35Model   = @"gemini-3.5-flash-lite"; // Mặc định
+static NSString *const kGemini31Model   = @"gemini-3.1-flash-lite";
 
 static NSUInteger sCurrentKeyIndex = 0;
 
@@ -25,117 +25,422 @@ static NSUInteger sCurrentKeyIndex = 0;
 // QUẢN LÝ KEY POOL & MODEL
 // =========================================================================
 
-static NSArray<NSString *> *GetGeminiKeyPool(void) {
-    NSString *rawKeys = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiKeysPref];
-    if (!rawKeys || [rawKeys length] == 0) {
-        return [NSArray array];
-    }
+static NSArray<NSString *> *ParseAndCleanGeminiKeys(NSString *rawInput) {
+    if (!rawInput || [rawInput length] == 0) return @[];
     
-    NSArray *components = [rawKeys componentsSeparatedByCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@"\n,;"]];
-    NSMutableArray *validKeys = [NSMutableArray array];
+    // Tách theo nhiều loại ký tự phân cách: xuống dòng, tab, phẩy, chấm phẩy, khoảng trắng, gạch đứng, dấu nháy, ngoặc vuông/nhọn
+    NSCharacterSet *delimiters = [NSCharacterSet characterSetWithCharactersInString:@"\r\n,;|\"'` \t[]{}()"];
+    NSArray *components = [rawInput componentsSeparatedByCharactersInSet:delimiters];
     
-    for (NSString *k in components) {
-        NSString *trimmed = [k stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-        if ([trimmed length] > 0) {
+    NSMutableArray<NSString *> *validKeys = [NSMutableArray array];
+    NSMutableSet<NSString *> *seenKeys = [NSMutableSet set];
+    
+    for (NSString *item in components) {
+        NSString *trimmed = [item stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        
+        // Loại bỏ các tiền tố như gạch đầu dòng, số thứ tự (ví dụ: "1.", "-", "*")
+        while ([trimmed hasPrefix:@"-"] || [trimmed hasPrefix:@"*"] || [trimmed hasPrefix:@">"]) {
+            trimmed = [[trimmed substringFromIndex:1] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+        
+        // Gemini API Key tiêu chuẩn thường bắt đầu bằng AIzaSy và có độ dài ~39 ký tự
+        // Chấp nhận mọi chuỗi hợp lệ >= 20 ký tự không chứa khoảng trắng
+        if ([trimmed length] >= 20 && ![seenKeys containsObject:trimmed]) {
             [validKeys addObject:trimmed];
+            [seenKeys addObject:trimmed];
         }
     }
     return validKeys;
 }
 
-static NSString *GetActiveGeminiKey(void) {
-    NSArray *keys = GetGeminiKeyPool();
-    if ([keys count] == 0) return @"";
-    return keys[sCurrentKeyIndex % [keys count]];
-}
-
-static void RotateToNextKey(void) {
-    NSArray *keys = GetGeminiKeyPool();
-    if ([keys count] > 1) {
-        sCurrentKeyIndex = (sCurrentKeyIndex + 1) % [keys count];
-        LOG(@"Đã tự động xoay sang Key #%lu/%lu", (unsigned long)(sCurrentKeyIndex + 1), (unsigned long)[keys count]);
-    }
+static NSArray<NSString *> *GetGeminiKeyPool(void) {
+    NSString *rawKeys = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiKeysPref];
+    return ParseAndCleanGeminiKeys(rawKeys);
 }
 
 static NSString *GetSavedGeminiModel(void) {
     NSString *model = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiModelPref];
-    if ([model isEqualToString:kGemini35Model]) {
-        return kGemini35Model;
+    if ([model isEqualToString:kGemini31Model]) {
+        return kGemini31Model;
     }
-    return kGemini25Model;
+    return kGemini35Model;
 }
 
 static void SaveGeminiSettings(NSString *rawKeys, NSString *model) {
-    NSString *trimmedKeys = [rawKeys ?: @"" stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
-    NSString *safeModel = [model isEqualToString:kGemini35Model] ? kGemini35Model : kGemini25Model;
-    [[NSUserDefaults standardUserDefaults] setObject:trimmedKeys forKey:kGeminiKeysPref];
+    NSArray<NSString *> *parsed = ParseAndCleanGeminiKeys(rawKeys);
+    NSString *cleanKeysText = [parsed componentsJoinedByString:@"\n"];
+    
+    NSString *safeModel = [model isEqualToString:kGemini31Model] ? kGemini31Model : kGemini35Model;
+    
+    [[NSUserDefaults standardUserDefaults] setObject:cleanKeysText forKey:kGeminiKeysPref];
     [[NSUserDefaults standardUserDefaults] setObject:safeModel forKey:kGeminiModelPref];
     [[NSUserDefaults standardUserDefaults] synchronize];
-    sCurrentKeyIndex = 0;
-    LOG(@"Đã lưu cấu hình: %lu keys, model: %@", (unsigned long)[GetGeminiKeyPool() count], safeModel);
+    
+    @synchronized (kGeminiKeysPref) {
+        sCurrentKeyIndex = 0;
+    }
+    LOG(@"Đã lưu cấu hình: %lu keys, model: %@", (unsigned long)[parsed count], safeModel);
+}
+
+static NSString *GetKeyForAttempt(NSUInteger attempt, NSUInteger *outIndex, NSUInteger *outTotal) {
+    NSArray<NSString *> *keys = GetGeminiKeyPool();
+    if (outTotal) *outTotal = [keys count];
+    if ([keys count] == 0) {
+        if (outIndex) *outIndex = 0;
+        return @"";
+    }
+    
+    NSUInteger idx = 0;
+    @synchronized (kGeminiKeysPref) {
+        idx = (sCurrentKeyIndex + attempt) % [keys count];
+    }
+    if (outIndex) *outIndex = idx;
+    return keys[idx];
+}
+
+static void RotateToNextKey(void) {
+    NSArray<NSString *> *keys = GetGeminiKeyPool();
+    if ([keys count] > 1) {
+        @synchronized (kGeminiKeysPref) {
+            sCurrentKeyIndex = (sCurrentKeyIndex + 1) % [keys count];
+            LOG(@"Đã tự động xoay sang Key #%lu/%lu", (unsigned long)(sCurrentKeyIndex + 1), (unsigned long)[keys count]);
+        }
+    }
 }
 
 // =========================================================================
-// GIAO DIỆN CÀI ĐẶT: POPUP NHẬP NHIỀU KEY & NÚT NỔI
+// GIAO DIỆN CÀI ĐẶT: POPUP QUẢN LÝ NHIỀU KEY & MODEL (MODAL TỰ TẠO)
 // =========================================================================
+
+@interface GeminiSettingsViewController : UIViewController <UITextViewDelegate>
+@property (nonatomic, strong) UIView *cardView;
+@property (nonatomic, strong) UILabel *titleLabel;
+@property (nonatomic, strong) UILabel *statusLabel;
+@property (nonatomic, strong) UITextView *textView;
+@property (nonatomic, strong) UILabel *placeholderLabel;
+@property (nonatomic, strong) UISegmentedControl *modelSegment;
+@property (nonatomic, strong) UIButton *btnPaste;
+@property (nonatomic, strong) UIButton *btnClean;
+@property (nonatomic, strong) UIButton *btnClear;
+@property (nonatomic, strong) UIButton *btnSave;
+@property (nonatomic, strong) UIButton *btnClose;
+@property (nonatomic, strong) NSLayoutConstraint *cardCenterYConstraint;
+@end
+
+@implementation GeminiSettingsViewController
+
+- (void)viewDidLoad {
+    [super viewDidLoad];
+    
+    self.view.backgroundColor = [UIColor colorWithWhite:0.0 alpha:0.55];
+    
+    // Tap ngoài để ẩn bàn phím
+    UITapGestureRecognizer *tap = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(dismissKeyboard)];
+    tap.cancelsTouchesInView = NO;
+    [self.view addGestureRecognizer:tap];
+    
+    // Khung Card
+    self.cardView = [[UIView alloc] init];
+    self.cardView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.cardView.backgroundColor = [UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *tc) {
+        if (tc.userInterfaceStyle == UIUserInterfaceStyleDark) {
+            return [UIColor colorWithRed:0.12 green:0.12 blue:0.14 alpha:1.0];
+        }
+        return [UIColor whiteColor];
+    }];
+    self.cardView.layer.cornerRadius = 18.0;
+    self.cardView.layer.shadowColor = [UIColor blackColor].CGColor;
+    self.cardView.layer.shadowOffset = CGSizeMake(0, 8);
+    self.cardView.layer.shadowRadius = 20.0;
+    self.cardView.layer.shadowOpacity = 0.35;
+    [self.view addSubview:self.cardView];
+    
+    // Stack chính
+    UIStackView *mainStack = [[UIStackView alloc] init];
+    mainStack.translatesAutoresizingMaskIntoConstraints = NO;
+    mainStack.axis = UILayoutConstraintAxisVertical;
+    mainStack.spacing = 12.0;
+    mainStack.layoutMargins = UIEdgeInsetsMake(18, 18, 18, 18);
+    mainStack.layoutMarginsRelativeArrangement = YES;
+    [self.cardView addSubview:mainStack];
+    
+    // Header Stack: Title + Close Button
+    UIStackView *headerStack = [[UIStackView alloc] init];
+    headerStack.axis = UILayoutConstraintAxisHorizontal;
+    headerStack.alignment = UIStackViewAlignmentCenter;
+    headerStack.distribution = UIStackViewDistributionFill;
+    
+    self.titleLabel = [[UILabel alloc] init];
+    self.titleLabel.text = @"🤖 Gemini Key Pool & Model";
+    self.titleLabel.font = [UIFont boldSystemFontOfSize:17];
+    self.titleLabel.textColor = [UIColor labelColor];
+    [headerStack addArrangedSubview:self.titleLabel];
+    
+    self.btnClose = [UIButton buttonWithType:UIButtonTypeSystem];
+    [self.btnClose setTitle:@"✕" forState:UIControlStateNormal];
+    self.btnClose.titleLabel.font = [UIFont systemFontOfSize:18 weight:UIFontWeightBold];
+    [self.btnClose setTitleColor:[UIColor secondaryLabelColor] forState:UIControlStateNormal];
+    [self.btnClose addTarget:self action:@selector(handleClose) forControlEvents:UIControlEventTouchUpInside];
+    [self.btnClose setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [headerStack addArrangedSubview:self.btnClose];
+    
+    [mainStack addArrangedSubview:headerStack];
+    
+    // Status Label
+    self.statusLabel = [[UILabel alloc] init];
+    self.statusLabel.font = [UIFont systemFontOfSize:12 weight:UIFontWeightMedium];
+    self.statusLabel.numberOfLines = 2;
+    [mainStack addArrangedSubview:self.statusLabel];
+    
+    // Text View Container (có placeholder)
+    UIView *tvContainer = [[UIView alloc] init];
+    tvContainer.translatesAutoresizingMaskIntoConstraints = NO;
+    tvContainer.backgroundColor = [UIColor secondarySystemBackgroundColor];
+    tvContainer.layer.cornerRadius = 10.0;
+    tvContainer.layer.borderWidth = 0.8;
+    tvContainer.layer.borderColor = [UIColor separatorColor].CGColor;
+    tvContainer.clipsToBounds = YES;
+    
+    self.textView = [[UITextView alloc] init];
+    self.textView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.textView.backgroundColor = [UIColor clearColor];
+    self.textView.font = [UIFont monospacedSystemFontOfSize:12 weight:UIFontWeightRegular];
+    self.textView.textColor = [UIColor labelColor];
+    self.textView.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    self.textView.autocorrectionType = UITextAutocorrectionTypeNo;
+    self.textView.spellCheckingType = UITextSpellCheckingTypeNo;
+    self.textView.delegate = self;
+    [tvContainer addSubview:self.textView];
+    
+    self.placeholderLabel = [[UILabel alloc] init];
+    self.placeholderLabel.translatesAutoresizingMaskIntoConstraints = NO;
+    self.placeholderLabel.text = @"Dán danh sách API Key tại đây...\n(AIzaSy...)\nMỗi dòng 1 key hoặc cách bằng dấu phẩy.";
+    self.placeholderLabel.font = [UIFont systemFontOfSize:12];
+    self.placeholderLabel.textColor = [UIColor placeholderTextColor];
+    self.placeholderLabel.numberOfLines = 0;
+    self.placeholderLabel.userInteractionEnabled = NO;
+    [tvContainer addSubview:self.placeholderLabel];
+    
+    [NSLayoutConstraint activateConstraints:@[
+        [self.textView.topAnchor constraintEqualToAnchor:tvContainer.topAnchor constant:4],
+        [self.textView.leadingAnchor constraintEqualToAnchor:tvContainer.leadingAnchor constant:6],
+        [self.textView.trailingAnchor constraintEqualToAnchor:tvContainer.trailingAnchor constant:-6],
+        [self.textView.bottomAnchor constraintEqualToAnchor:tvContainer.bottomAnchor constant:-4],
+        [self.textView.heightAnchor constraintEqualToConstant:120],
+        
+        [self.placeholderLabel.topAnchor constraintEqualToAnchor:tvContainer.topAnchor constant:12],
+        [self.placeholderLabel.leadingAnchor constraintEqualToAnchor:tvContainer.leadingAnchor constant:12],
+        [self.placeholderLabel.trailingAnchor constraintEqualToAnchor:tvContainer.trailingAnchor constant:-12]
+    ]];
+    
+    [mainStack addArrangedSubview:tvContainer];
+    
+    // Quick Actions Row
+    UIStackView *actionsRow = [[UIStackView alloc] init];
+    actionsRow.axis = UILayoutConstraintAxisHorizontal;
+    actionsRow.distribution = UIStackViewDistributionFillEqually;
+    actionsRow.spacing = 8.0;
+    
+    self.btnPaste = [self createSmallButton:@"📋 Dán Clipboard" action:@selector(handlePaste)];
+    self.btnClean = [self createSmallButton:@"🧹 Dọn dẹp Key" action:@selector(handleClean)];
+    self.btnClear = [self createSmallButton:@"🗑️ Xóa hết" action:@selector(handleClear)];
+    
+    [actionsRow addArrangedSubview:self.btnPaste];
+    [actionsRow addArrangedSubview:self.btnClean];
+    [actionsRow addArrangedSubview:self.btnClear];
+    [mainStack addArrangedSubview:actionsRow];
+    
+    // Model Selection
+    UILabel *modelTitle = [[UILabel alloc] init];
+    modelTitle.text = @"Chọn Model Gemini:";
+    modelTitle.font = [UIFont boldSystemFontOfSize:12];
+    modelTitle.textColor = [UIColor secondaryLabelColor];
+    [mainStack addArrangedSubview:modelTitle];
+    
+    self.modelSegment = [[UISegmentedControl alloc] initWithItems:@[ @"3.5 Flash Lite (Mặc định)", @"3.1 Flash Lite" ]];
+    NSString *currentModel = GetSavedGeminiModel();
+    if ([currentModel isEqualToString:kGemini31Model]) {
+        self.modelSegment.selectedSegmentIndex = 1;
+    } else {
+        self.modelSegment.selectedSegmentIndex = 0; // gemini-3.5-flash-lite mặc định
+    }
+    [mainStack addArrangedSubview:self.modelSegment];
+    
+    // Save Button
+    self.btnSave = [UIButton buttonWithType:UIButtonTypeSystem];
+    self.btnSave.translatesAutoresizingMaskIntoConstraints = NO;
+    [self.btnSave setTitle:@"💾 Lưu cấu hình" forState:UIControlStateNormal];
+    self.btnSave.titleLabel.font = [UIFont boldSystemFontOfSize:15];
+    [self.btnSave setTitleColor:[UIColor whiteColor] forState:UIControlStateNormal];
+    self.btnSave.backgroundColor = [UIColor colorWithRed:0.08 green:0.52 blue:1.0 alpha:1.0];
+    self.btnSave.layer.cornerRadius = 10.0;
+    [self.btnSave addTarget:self action:@selector(handleSave) forControlEvents:UIControlEventTouchUpInside];
+    [self.btnSave.heightAnchor constraintEqualToConstant:44].active = YES;
+    [mainStack addArrangedSubview:self.btnSave];
+    
+    // Nạp dữ liệu hiện tại
+    NSArray<NSString *> *existing = GetGeminiKeyPool();
+    if ([existing count] > 0) {
+        self.textView.text = [existing componentsJoinedByString:@"\n"];
+    }
+    [self updateKeyCountDisplay];
+    
+    // Layout Constraints cho Card
+    self.cardCenterYConstraint = [self.cardView.centerYAnchor constraintEqualToAnchor:self.view.centerYAnchor];
+    [NSLayoutConstraint activateConstraints:@[
+        self.cardCenterYConstraint,
+        [self.cardView.centerXAnchor constraintEqualToAnchor:self.view.centerXAnchor],
+        [self.cardView.leadingAnchor constraintGreaterThanOrEqualToAnchor:self.view.leadingAnchor constant:20],
+        [self.cardView.trailingAnchor constraintLessThanOrEqualToAnchor:self.view.trailingAnchor constant:-20],
+        [self.cardView.widthAnchor constraintLessThanOrEqualToConstant:400],
+        [self.cardView.widthAnchor constraintGreaterThanOrEqualToConstant:320],
+        
+        [mainStack.topAnchor constraintEqualToAnchor:self.cardView.topAnchor],
+        [mainStack.leadingAnchor constraintEqualToAnchor:self.cardView.leadingAnchor],
+        [mainStack.trailingAnchor constraintEqualToAnchor:self.cardView.trailingAnchor],
+        [mainStack.bottomAnchor constraintEqualToAnchor:self.cardView.bottomAnchor]
+    ]];
+}
+
+- (UIButton *)createSmallButton:(NSString *)title action:(SEL)action {
+    UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
+    [btn setTitle:title forState:UIControlStateNormal];
+    btn.titleLabel.font = [UIFont systemFontOfSize:11 weight:UIFontWeightMedium];
+    [btn setTitleColor:[UIColor labelColor] forState:UIControlStateNormal];
+    btn.backgroundColor = [UIColor tertiarySystemFillColor];
+    btn.layer.cornerRadius = 6.0;
+    [btn addTarget:self action:action forControlEvents:UIControlEventTouchUpInside];
+    [btn.heightAnchor constraintEqualToConstant:28].active = YES;
+    return btn;
+}
+
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillShow:) name:UIKeyboardWillShowNotification object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keyboardWillHide:) name:UIKeyboardWillHideNotification object:nil];
+}
+
+- (void)viewWillDisappear:(BOOL)animated {
+    [super viewWillDisappear:animated];
+    [[NSNotificationCenter defaultCenter] removeObserver:self];
+}
+
+- (void)keyboardWillShow:(NSNotification *)notification {
+    NSDictionary *info = [notification userInfo];
+    CGRect kbFrame = [info[UIKeyboardFrameEndUserInfoKey] CGRectValue];
+    NSTimeInterval duration = [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    
+    CGFloat offset = -(kbFrame.size.height / 2.0) + 30;
+    self.cardCenterYConstraint.constant = offset;
+    [UIView animateWithDuration:duration animations:^{
+        [self.view layoutIfNeeded];
+    }];
+}
+
+- (void)keyboardWillHide:(NSNotification *)notification {
+    NSDictionary *info = [notification userInfo];
+    NSTimeInterval duration = [info[UIKeyboardAnimationDurationUserInfoKey] doubleValue];
+    
+    self.cardCenterYConstraint.constant = 0;
+    [UIView animateWithDuration:duration animations:^{
+        [self.view layoutIfNeeded];
+    }];
+}
+
+- (void)dismissKeyboard {
+    [self.view endEditing:YES];
+}
+
+- (void)textViewDidChange:(UITextView *)textView {
+    [self updateKeyCountDisplay];
+}
+
+- (void)updateKeyCountDisplay {
+    NSArray<NSString *> *keys = ParseAndCleanGeminiKeys(self.textView.text);
+    NSUInteger count = [keys count];
+    if (count == 0) {
+        self.statusLabel.text = @"⚠️ Chưa có Key nào. Dán 1 hoặc nhiều key để dịch.";
+        self.statusLabel.textColor = [UIColor systemOrangeColor];
+        self.placeholderLabel.hidden = (self.textView.text.length > 0);
+    } else {
+        self.statusLabel.text = [NSString stringWithFormat:@"✅ Đã nhận diện %lu Key hợp lệ (Tự động xoay vòng)", (unsigned long)count];
+        self.statusLabel.textColor = [UIColor systemGreenColor];
+        self.placeholderLabel.hidden = YES;
+    }
+}
+
+- (void)handlePaste {
+    NSString *pb = [UIPasteboard generalPasteboard].string;
+    if (pb.length > 0) {
+        if (self.textView.text.length > 0) {
+            self.textView.text = [NSString stringWithFormat:@"%@\n%@", self.textView.text, pb];
+        } else {
+            self.textView.text = pb;
+        }
+        [self handleClean];
+    }
+}
+
+- (void)handleClean {
+    NSArray<NSString *> *keys = ParseAndCleanGeminiKeys(self.textView.text);
+    self.textView.text = [keys componentsJoinedByString:@"\n"];
+    [self updateKeyCountDisplay];
+}
+
+- (void)handleClear {
+    self.textView.text = @"";
+    [self updateKeyCountDisplay];
+}
+
+- (void)handleSave {
+    [self dismissKeyboard];
+    
+    NSString *selectedModel = (self.modelSegment.selectedSegmentIndex == 1) ? kGemini31Model : kGemini35Model;
+    
+    SaveGeminiSettings(self.textView.text, selectedModel);
+    
+    [self.btnSave setTitle:@"✓ Đã lưu thành công!" forState:UIControlStateNormal];
+    self.btnSave.backgroundColor = [UIColor systemGreenColor];
+    
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.35 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        [self dismissViewControllerAnimated:YES completion:nil];
+    });
+}
+
+- (void)handleClose {
+    [self dismissViewControllerAnimated:YES completion:nil];
+}
+
+@end
+
+static UIViewController *GetTopViewController(void) {
+    UIWindow *keyWindow = nil;
+    for (UIWindow *w in [UIApplication sharedApplication].windows) {
+        if ([w isKeyWindow]) {
+            keyWindow = w;
+            break;
+        }
+    }
+    if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
+    UIViewController *topVC = keyWindow.rootViewController;
+    while (topVC.presentedViewController) {
+        topVC = topVC.presentedViewController;
+    }
+    return topVC;
+}
 
 static void ShowGeminiSettingsPopup(void) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        UIWindow *keyWindow = nil;
-        for (UIWindow *w in [UIApplication sharedApplication].windows) {
-            if ([w isKeyWindow]) {
-                keyWindow = w;
-                break;
-            }
-        }
-        if (!keyWindow) keyWindow = [UIApplication sharedApplication].windows.firstObject;
-        UIViewController *topVC = keyWindow.rootViewController;
-        while (topVC.presentedViewController) {
-            topVC = topVC.presentedViewController;
+        UIViewController *topVC = GetTopViewController();
+        if (!topVC) return;
+        if ([topVC isKindOfClass:[GeminiSettingsViewController class]]) {
+            return;
         }
         
-        NSArray *currentKeys = GetGeminiKeyPool();
-        NSString *currentKeysText = [[NSUserDefaults standardUserDefaults] stringForKey:kGeminiKeysPref] ?: @"";
-        NSString *activeModel = GetSavedGeminiModel();
-        NSString *message = [NSString stringWithFormat:@"Đang có %lu API key.\nModel đang dùng: %@\nDán nhiều key, phân cách bằng dấu phẩy hoặc xuống dòng để tự động xoay key khi quá tải.", (unsigned long)[currentKeys count], activeModel];
-        
-        UIAlertController *alert = [UIAlertController alertControllerWithTitle:@"🤖 Gemini Key Pool & Model"
-                                                                       message:message
-                                                                preferredStyle:UIAlertControllerStyleAlert];
-        
-        [alert addTextFieldWithConfigurationHandler:^(UITextField * _Nonnull textField) {
-            textField.placeholder = @"Dán Gemini API Key (AIzaSy...)";
-            textField.text = currentKeysText;
-            textField.clearButtonMode = UITextFieldViewModeWhileEditing;
-            textField.autocapitalizationType = UITextAutocapitalizationTypeNone;
-            textField.autocorrectionType = UITextAutocorrectionTypeNo;
-        }];
-
-        NSString *title25 = [activeModel isEqualToString:kGemini25Model]
-            ? @"✓ Gemini 2.5 Flash Lite" : @"Gemini 2.5 Flash Lite";
-        NSString *title35 = [activeModel isEqualToString:kGemini35Model]
-            ? @"✓ Gemini 3.5 Flash Lite" : @"Gemini 3.5 Flash Lite";
-
-        [alert addAction:[UIAlertAction actionWithTitle:title25
-                                                 style:UIAlertActionStyleDefault
-                                               handler:^(UIAlertAction *action) {
-            (void)action;
-            SaveGeminiSettings(alert.textFields.firstObject.text, kGemini25Model);
-        }]];
-
-        [alert addAction:[UIAlertAction actionWithTitle:title35
-                                                 style:UIAlertActionStyleDefault
-                                               handler:^(UIAlertAction *action) {
-            (void)action;
-            SaveGeminiSettings(alert.textFields.firstObject.text, kGemini35Model);
-        }]];
-        
-        UIAlertAction *cancelAction = [UIAlertAction actionWithTitle:@"Đóng"
-                                                               style:UIAlertActionStyleCancel
-                                                             handler:nil];
-        [alert addAction:cancelAction];
-        
-        [topVC presentViewController:alert animated:YES completion:nil];
+        GeminiSettingsViewController *vc = [[GeminiSettingsViewController alloc] init];
+        vc.modalPresentationStyle = UIModalPresentationOverFullScreen;
+        vc.modalTransitionStyle = UIModalTransitionStyleCrossDissolve;
+        [topVC presentViewController:vc animated:YES completion:nil];
     });
 }
 
@@ -219,7 +524,9 @@ static void CallGeminiTranslation(NSArray<NSString *> *texts,
         return;
     }
     
-    NSString *currentKey = GetActiveGeminiKey();
+    NSUInteger keyIdx = 0;
+    NSUInteger totalKeys = 0;
+    NSString *currentKey = GetKeyForAttempt(attempt, &keyIdx, &totalKeys);
     NSString *model = GetSavedGeminiModel();
     
     if ([currentKey length] == 0) {
@@ -227,6 +534,8 @@ static void CallGeminiTranslation(NSArray<NSString *> *texts,
         completion(texts);
         return;
     }
+    
+    LOG(@"[Gemini] Bắt đầu dịch %lu câu bằng Key #%lu/%lu (Model: %@)...", (unsigned long)[texts count], (unsigned long)(keyIdx + 1), (unsigned long)totalKeys, model);
     
     NSError *error = nil;
     NSData *textsJsonData = [NSJSONSerialization dataWithJSONObject:texts options:0 error:&error];
@@ -286,7 +595,7 @@ static void CallGeminiTranslation(NSArray<NSString *> *texts,
         BOOL isKeyOrModelError = (statusCode == 429 || statusCode == 400 || statusCode == 401 || statusCode == 403 || statusCode == 404);
         
         if ((isKeyOrModelError || netError) && attempt < maxTries - 1) {
-            LOG(@"Lỗi gọi Gemini (HTTP %ld). Đang xoay sang Key tiếp theo...", (long)statusCode);
+            LOG(@"Lỗi gọi Gemini (HTTP %ld với Key #%lu/%lu). Đang xoay sang Key tiếp theo...", (long)statusCode, (unsigned long)(keyIdx + 1), (unsigned long)totalKeys);
             RotateToNextKey();
             CallGeminiTranslation(texts, srcLang, tgtLang, userContext, attempt + 1, maxTries, completion);
             return;
@@ -839,6 +1148,11 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
 
 - (void)hook_viewDidAppear:(BOOL)animated {
     [self hook_viewDidAppear:animated];
+    
+    if ([self isKindOfClass:NSClassFromString(@"GeminiSettingsViewController")]) {
+        return;
+    }
+    
     AddFloatingButtonToWindow();
     
     NSString *className = NSStringFromClass([self class]);
