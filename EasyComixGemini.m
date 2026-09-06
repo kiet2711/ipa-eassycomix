@@ -7,8 +7,6 @@
 #import <mach-o/loader.h>
 #import <mach-o/nlist.h>
 #import <mach/mach.h>
-#import <mach/mach_vm.h>
-#import <mach/vm_map.h>
 #import <sys/mman.h>
 #import <dlfcn.h>
 #import <unistd.h>
@@ -1492,37 +1490,7 @@ static void PatchDirectPointer(void **entry_ptr, void *new_func_ptr) {
         return;
     }
     
-    // Phương pháp 2: mach_vm_remap alias (tạo mapping ghi tạm thời đến cùng physical page)
-    mach_vm_address_t remap_addr = 0;
-    vm_prot_t cur_prot = 0, max_prot = 0;
-    kr = mach_vm_remap(
-        task,
-        &remap_addr,
-        (mach_vm_size_t)page_size,
-        0,
-        VM_FLAGS_ANYWHERE,
-        task,
-        (mach_vm_address_t)page_start,
-        FALSE,
-        &cur_prot,
-        &max_prot,
-        VM_INHERIT_NONE
-    );
-    
-    if (kr == KERN_SUCCESS) {
-        kr = vm_protect(task, (vm_address_t)remap_addr, (vm_size_t)page_size, 0, VM_PROT_READ | VM_PROT_WRITE);
-        if (kr == KERN_SUCCESS) {
-            uintptr_t offset = (uintptr_t)entry_ptr - page_start;
-            void **alias_ptr = (void **)(remap_addr + offset);
-            void *old_value = *alias_ptr;
-            *alias_ptr = new_func_ptr;
-            LOG(@"[GOT Patch] mach_vm_remap alias thành công tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
-        }
-        vm_deallocate(task, (vm_address_t)remap_addr, (vm_size_t)page_size);
-        if (kr == KERN_SUCCESS) return;
-    }
-    
-    // Phương pháp 3: vm_write (Mach kernel primitive)
+    // Phương pháp 2: vm_write (Mach kernel primitive)
     kr = vm_write(
         task,
         (vm_address_t)entry_ptr,
@@ -1534,7 +1502,7 @@ static void PatchDirectPointer(void **entry_ptr, void *new_func_ptr) {
         return;
     }
     
-    // Phương pháp 4: mprotect POSIX fallback
+    // Phương pháp 3: mprotect POSIX fallback
     int mp = mprotect((void *)page_start, page_size, PROT_READ | PROT_WRITE);
     if (mp == 0) {
         void *old_value = *entry_ptr;
