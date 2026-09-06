@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Patch EasyComix Mach-O binary to permanently bypass Ed25519 signature checks."""
+"""Patch EasyComix Mach-O binary to permanently bypass all Ed25519 signature verification checks."""
 
 from __future__ import annotations
 
@@ -11,12 +11,9 @@ MH_MAGIC_64 = 0xFEEDFACF
 LC_SEGMENT_64 = 0x19
 LC_DYLD_CHAINED_FIXUPS = 0x80000034
 
-# ARM64 opcodes
-# mov w0, #1 -> 0x52800020
-# ret        -> 0xd65f03c0
-# nop        -> 0xd503201f
-PATCH_STUB_BYTES = bytes.fromhex("20008052c0035fd61f2003d5")
-NOP_INSN = bytes.fromhex("1f2003d5")
+PATCH_STUB_BYTES = bytes.fromhex("20008052c0035fd61f2003d5") # mov w0, #1; ret; nop
+PATCH_FUNC_BYTES = bytes.fromhex("f5031faac0035fd6")         # mov x21, xzr; ret
+PATCH_NOP = bytes.fromhex("1f2003d5")                        # nop
 
 
 def find_got_va_from_fixups(data: bytearray) -> int:
@@ -128,17 +125,13 @@ def patch_binary(binary_path: Path) -> bool:
     candidate_vas = [v for v in [got_va, 0x100582CD0, 0x100516AA8] if v]
 
     # 2. Search for stub in binary:
-    # adrp x16, page
-    # ldr x16, [x16, page_offset]
-    # br x16
     stub_file_offsets = []
     for va in candidate_vas:
         target_page = va >> 12
         target_off = va & 0xFFF
         for pc in range(0, min(len(data), 0x500000), 4):
             insn1 = struct.unpack_from("<I", data, pc)[0]
-            # Check ADRP x16: (insn1 & 0x9F00001F) == 0x90000010
-            if (insn1 & 0x9F00001F) == 0x90000010:
+            if (insn1 & 0x9F00001F) == 0x90000010: # ADRP x16
                 immlo = (insn1 >> 29) & 3
                 immhi = (insn1 >> 5) & 0x7FFFF
                 imm = (immhi << 2) | immlo
@@ -147,50 +140,104 @@ def patch_binary(binary_path: Path) -> bool:
                 curr_va = 0x100000000 + pc
                 if (curr_va >> 12) + imm == target_page:
                     insn2 = struct.unpack_from("<I", data, pc + 4)[0]
-                    if (insn2 & 0xFFC003FF) == 0xF9400210:
+                    if (insn2 & 0xFFC003FF) == 0xF9400210: # LDR x16
                         scale_off = ((insn2 >> 10) & 0xFFF) * 8
                         if scale_off == target_off:
                             insn3 = struct.unpack_from("<I", data, pc + 8)[0]
-                            if insn3 == 0xD61F0200:
+                            if insn3 == 0xD61F0200: # BR x16
                                 if pc not in stub_file_offsets:
                                     stub_file_offsets.append(pc)
 
     for soff in stub_file_offsets:
         cur_bytes = data[soff : soff + 12]
-        if cur_bytes == PATCH_STUB_BYTES:
-            print(f"[Patch] Stub at file offset {hex(soff)} (VA {hex(0x100000000 + soff)}) already patched.")
-        else:
+        if cur_bytes != PATCH_STUB_BYTES:
             data[soff : soff + 12] = PATCH_STUB_BYTES
-            print(f"[Patch] Successfully patched stub at file offset {hex(soff)} (VA {hex(0x100000000 + soff)}) -> mov w0, #1; ret; nop")
+            print(f"[Patch 1/4] Patched stub at offset {hex(soff)} (VA {hex(0x100000000 + soff)}) -> mov w0, #1; ret; nop")
             patched_count += 1
+        else:
+            print(f"[Patch 1/4] Stub at offset {hex(soff)} already patched.")
 
-        # Search for callers (BL to stub) and patch immediately following tbz
+    # 3. Search for the caller of stub (inside verifyServerResponse)
+    # And search backwards for the start of verifyServerResponse
+    bl_callers = []
+    for soff in stub_file_offsets:
         stub_va = 0x100000000 + soff
         for pc in range(0, min(len(data), 0x400000), 4):
             insn = struct.unpack_from("<I", data, pc)[0]
             if (insn & 0xFC000000) == 0x94000000: # BL
                 imm26 = insn & 0x03FFFFFF
-                if imm26 & (1 << 25):
-                    imm26 -= 1 << 26
-                dest_va = 0x100000000 + pc + (imm26 * 4)
-                if dest_va == stub_va:
-                    print(f"[Patch] Found caller BL to stub at {hex(0x100000000 + pc)}")
-                    # Scan forward up to 64 bytes for tbz check
+                if imm26 & (1 << 25): imm26 -= 1 << 26
+                if 0x100000000 + pc + (imm26 * 4) == stub_va:
+                    bl_callers.append(pc)
+                    # Also patch tbz following bl
                     for fwd in range(pc + 4, pc + 64, 4):
                         next_insn = struct.unpack_from("<I", data, fwd)[0]
-                        if (next_insn & 0xFFF8001F) == 0x36000014: # tbz w20, #0, ...
-                            if data[fwd : fwd + 4] != NOP_INSN:
-                                data[fwd : fwd + 4] = NOP_INSN
-                                print(f"[Patch] Surgically patched tbz w20 check at {hex(0x100000000 + fwd)} -> nop")
+                        if (next_insn & 0xFFF8001F) == 0x36000014: # tbz w20, #0
+                            if data[fwd : fwd + 4] != PATCH_NOP:
+                                data[fwd : fwd + 4] = PATCH_NOP
+                                print(f"[Patch 2/4] Patched tbz w20 at offset {hex(fwd)} -> nop")
                                 patched_count += 1
                             break
 
+    # 4. Patch verifyServerResponse function entry to immediately return success (mov x21, xzr; ret)
+    func_starts = []
+    for bl_pc in bl_callers:
+        # Search backward for preceding ret (0xD65F03C0)
+        # Note: skip cold blocks, search from ~0x1B35E8 if around 1.0.26
+        search_start = min(bl_pc, 0x1B35F0)
+        for pc in range(search_start, max(0, search_start - 0x1000), -4):
+            insn = struct.unpack_from("<I", data, pc)[0]
+            if insn == 0xD65F03C0: # ret
+                entry_pc = pc + 4
+                if entry_pc not in func_starts:
+                    func_starts.append(entry_pc)
+                break
+
+    # Fallback known entry for 1.0.26 if not found
+    if not func_starts and len(data) > 0x1B3390:
+        func_starts.append(0x1B338C)
+
+    for f_pc in func_starts:
+        cur_bytes = data[f_pc : f_pc + 8]
+        if cur_bytes != PATCH_FUNC_BYTES:
+            data[f_pc : f_pc + 8] = PATCH_FUNC_BYTES
+            print(f"[Patch 3/4] Patched verifyServerResponse entry at {hex(f_pc)} (VA {hex(0x100000000 + f_pc)}) -> mov x21, xzr; ret")
+            patched_count += 1
+        else:
+            print(f"[Patch 3/4] verifyServerResponse entry at {hex(f_pc)} already patched.")
+
+    # 5. Patch caller site in APIClient to directly jump to success handler
+    for f_pc in func_starts:
+        func_va = 0x100000000 + f_pc
+        for pc in range(0, min(len(data), 0x400000), 4):
+            insn = struct.unpack_from("<I", data, pc)[0]
+            if (insn & 0xFC000000) == 0x94000000: # BL
+                imm26 = insn & 0x03FFFFFF
+                if imm26 & (1 << 25): imm26 -= 1 << 26
+                if 0x100000000 + pc + (imm26 * 4) == func_va:
+                    # Next insn should be cbz x21, label
+                    next_insn = struct.unpack_from("<I", data, pc + 4)[0]
+                    if (next_insn & 0xFF00001F) == 0xB4000015: # cbz x21, label
+                        imm19 = (next_insn >> 5) & 0x7FFFF
+                        if imm19 & (1 << 18): imm19 -= 1 << 19
+                        jump_target = 0x100000000 + pc + 4 + (imm19 * 4)
+                        # Compute B opcode from pc to jump_target
+                        b_imm26 = (jump_target - (0x100000000 + pc)) // 4
+                        b_opcode = 0x14000000 | (b_imm26 & 0x03FFFFFF)
+                        b_bytes = struct.pack("<I", b_opcode) + PATCH_NOP
+                        if data[pc : pc + 8] != b_bytes:
+                            data[pc : pc + 8] = b_bytes
+                            print(f"[Patch 4/4] Bypassed verification caller at {hex(pc)} -> b {hex(jump_target)}; nop")
+                            patched_count += 1
+                        else:
+                            print(f"[Patch 4/4] Verification caller at {hex(pc)} already bypassed.")
+
     if patched_count > 0:
         binary_path.write_bytes(data)
-        print(f"[Patch] Successfully applied {patched_count} modifications to {binary_path}")
+        print(f"[Patch] Successfully saved {patched_count} patches to {binary_path}")
         return True
     else:
-        print(f"[Patch] Binary {binary_path} already fully patched.")
+        print(f"[Patch] Binary {binary_path} is already fully patched.")
         return False
 
 

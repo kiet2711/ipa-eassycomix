@@ -1072,7 +1072,7 @@ static NSString *GetRequestSignatureNonce(NSURLRequest *request) {
     
     NSString *reqNonce = GetRequestSignatureNonce(self.request);
     NSMutableDictionary *headers = [NSMutableDictionary dictionaryWithDictionary:@{
-        @"Content-Type": @"application/json; charset=utf-8",
+        @"Content-Type": @"application/json",
         @"Access-Control-Allow-Origin": @"*",
         @"X-Signature": kMockEd25519SignatureBase64
     }];
@@ -1095,7 +1095,7 @@ static NSString *GetRequestSignatureNonce(NSURLRequest *request) {
     
     NSString *reqNonce = GetRequestSignatureNonce(self.request);
     NSMutableDictionary *headers = [NSMutableDictionary dictionaryWithDictionary:@{
-        @"Content-Type": @"application/json; charset=utf-8",
+        @"Content-Type": @"application/json",
         @"Access-Control-Allow-Origin": @"*",
         @"X-Signature": kMockEd25519SignatureBase64
     }];
