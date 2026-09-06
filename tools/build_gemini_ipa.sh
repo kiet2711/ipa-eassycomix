@@ -53,7 +53,8 @@ python3 "$ROOT_DIR/tools/inject_dylib.py" \
   '@executable_path/Frameworks/EasyComixGemini.dylib'
 
 rm -rf "$APP_DIR/_CodeSignature"
-find "$APP_DIR/Frameworks" -type d -name _CodeSignature -prune -exec rm -rf {} +
+find "$APP_DIR/Frameworks" -type d -name _CodeSignature -prune -exec rm -rf {} + 2>/dev/null || true
+find "$APP_DIR/PlugIns" -type d -name _CodeSignature -prune -exec rm -rf {} + 2>/dev/null || true
 
 mkdir -p "$(dirname "$OUTPUT_IPA")"
 rm -f "$OUTPUT_IPA"

@@ -17,6 +17,7 @@
 		<string>Frameworks/GoogleUtilities.framework/SC_Info/GoogleUtilities.sinf</string>
 		<string>Frameworks/RevenueCat.framework/SC_Info/RevenueCat.sinf</string>
 		<string>Frameworks/SSZipArchive.framework/SC_Info/SSZipArchive.sinf</string>
+		<string>PlugIns/EasyComixBroadcast.appex/SC_Info/EasyComixBroadcast.sinf</string>
 		<string>SC_Info/EasyComix.sinf</string>
 	</array>
 </dict>

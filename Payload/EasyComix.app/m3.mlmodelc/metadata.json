@@ -12,6 +12,46 @@
         "shape" : "[1, 1]",
         "name" : "next_token",
         "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_0_out",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_0_out",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_1_out",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_1_out",
+        "type" : "MultiArray"
       }
     ],
     "modelParameters" : [
@@ -19,67 +59,30 @@
     ],
     "specificationVersion" : 9,
     "mlProgramOperationTypeHistogram" : {
-      "Ios18.softmax" : 4,
-      "Ios18.mul" : 17,
-      "Ios18.matmul" : 10,
-      "Ios18.equal" : 1,
-      "Ios18.greaterEqual" : 3,
-      "Select" : 2,
-      "Ios18.readState" : 12,
-      "Ios18.gather" : 2,
-      "Ios18.add" : 17,
-      "Ios18.layerNorm" : 8,
-      "Ios18.writeState" : 8,
-      "Ios18.reshape" : 14,
-      "Ios18.reduceArgmax" : 1,
-      "Ios18.constexprLutToDense" : 19,
       "Ios18.linear" : 18,
-      "Ios18.gelu" : 3,
-      "Ios18.concat" : 2,
+      "Ios18.constexprLutToDense" : 19,
       "Ios18.sub" : 1,
+      "Select" : 2,
+      "Ios18.matmul" : 10,
+      "Ios18.gelu" : 3,
+      "Ios18.gather" : 2,
+      "Ios18.concat" : 2,
+      "Ios18.add" : 17,
+      "Ios18.reduceArgmax" : 1,
+      "Ios18.softmax" : 4,
+      "Ios18.sliceByIndex" : 8,
+      "Ios18.layerNorm" : 8,
       "Ios18.cast" : 9,
       "Ios18.transpose" : 12,
-      "Ios18.sliceByIndex" : 8
+      "Ios18.reshape" : 18,
+      "Ios18.equal" : 1,
+      "Ios18.greaterEqual" : 3,
+      "Ios18.mul" : 17
     },
     "computePrecision" : "Mixed (Float16, Int16, Int32, UInt16)",
     "isUpdatable" : "0",
     "stateSchema" : [
-      {
-        "dataType" : "Float16",
-        "isOptional" : "0",
-        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
-        "shortDescription" : "",
-        "shape" : "[1, 12, 128, 64]",
-        "name" : "k_cache_0",
-        "type" : "State"
-      },
-      {
-        "dataType" : "Float16",
-        "isOptional" : "0",
-        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
-        "shortDescription" : "",
-        "shape" : "[1, 12, 128, 64]",
-        "name" : "v_cache_0",
-        "type" : "State"
-      },
-      {
-        "dataType" : "Float16",
-        "isOptional" : "0",
-        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
-        "shortDescription" : "",
-        "shape" : "[1, 12, 128, 64]",
-        "name" : "k_cache_1",
-        "type" : "State"
-      },
-      {
-        "dataType" : "Float16",
-        "isOptional" : "0",
-        "formattedType" : "State (Float16 1 × 12 × 128 × 64)",
-        "shortDescription" : "",
-        "shape" : "[1, 12, 128, 64]",
-        "name" : "v_cache_1",
-        "type" : "State"
-      }
+
     ],
     "availability" : {
       "macOS" : "15.0",
@@ -137,6 +140,46 @@
         "shortDescription" : "",
         "shape" : "[2, 12, 197, 64]",
         "name" : "cross_v",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_0_in",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_0_in",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "k_cache_1_in",
+        "type" : "MultiArray"
+      },
+      {
+        "hasShapeFlexibility" : "0",
+        "isOptional" : "0",
+        "dataType" : "Float16",
+        "formattedType" : "MultiArray (Float16 1 × 12 × 128 × 64)",
+        "shortDescription" : "",
+        "shape" : "[1, 12, 128, 64]",
+        "name" : "v_cache_1_in",
         "type" : "MultiArray"
       }
     ],

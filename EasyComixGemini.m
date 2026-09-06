@@ -1,7 +1,26 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
+#import <Security/Security.h>
 #import <objc/runtime.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <mach-o/nlist.h>
+#import <mach/mach.h>
+#import <sys/mman.h>
+#import <dlfcn.h>
+#import <unistd.h>
+#import <fcntl.h>
+
+#ifndef SEG_DATA_CONST
+#define SEG_DATA_CONST "__DATA_CONST"
+#endif
+#ifndef SEG_AUTH_CONST
+#define SEG_AUTH_CONST "__AUTH_CONST"
+#endif
+#ifndef SEG_AUTH
+#define SEG_AUTH "__AUTH"
+#endif
 
 /**
  * EasyComix Gemini Tweak (Dylib)
@@ -726,7 +745,8 @@ static NSDictionary *ProQuotaUsageResponse(void) {
         @"success": @YES,
         @"data": @{
             @"quota": ProQuotaInfoDict(),
-            @"liveQuota": ProQuotaInfoDict()
+            @"liveQuota": ProQuotaInfoDict(),
+            @"novelQuota": ProQuotaInfoDict()
         },
         @"meta": @{
             @"quota": ProQuotaInfoDict()
@@ -744,6 +764,10 @@ static NSDictionary *ProQuotaConfigResponse(void) {
                 @"pro": @{ @"maxCalls": @999999 }
             },
             @"live": @{
+                @"free": @{ @"maxCalls": @999999 },
+                @"pro": @{ @"maxCalls": @999999 }
+            },
+            @"novel": @{
                 @"free": @{ @"maxCalls": @999999 },
                 @"pro": @{ @"maxCalls": @999999 }
             }
@@ -803,7 +827,8 @@ static NSDictionary *RevenueCatProSubscriberResponse(void) {
             },
             @"subscriptions": @{
                 productId: subscriptionInfo,
-                @"com.easycomix.pro.monthly": subscriptionInfo
+                @"com.easycomix.pro.monthly": subscriptionInfo,
+                @"com.easycomix.pro.weekly": subscriptionInfo
             },
             @"non_subscriptions": @{},
             @"other_purchases": @{}
@@ -817,6 +842,66 @@ static void ProcessTranslatePayload(NSDictionary *payload, void (^completion)(NS
     NSString *target = PayloadString(payload, @[ @"targetLanguage", @"targetLang", @"tgtLang" ], @"vi");
     NSString *userContext = PayloadString(payload, @[ @"userContext", @"storyContext", @"context" ], @"");
     
+    // A0. DỊCH TIỂU THUYẾT (Novel Reader) gửi mảng 'paragraphs' [{ "id": 0, "text": "..." }]
+    id rawParagraphs = payload[@"paragraphs"];
+    if ([rawParagraphs isKindOfClass:[NSArray class]]) {
+        NSArray *paragraphs = (NSArray *)rawParagraphs;
+        if ([paragraphs count] == 0) {
+            completion(@{
+                @"success": @YES,
+                @"data": @{
+                    @"translations": @[],
+                    @"sourceLang": source ?: @"auto",
+                    @"sessionRemainingChars": @999999,
+                    @"context": userContext ?: @""
+                },
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+            return;
+        }
+        
+        NSMutableArray<NSString *> *textsToTranslate = [NSMutableArray array];
+        for (id item in paragraphs) {
+            NSString *t = ExtractTextFromBubble(item);
+            [textsToTranslate addObject:t];
+        }
+        
+        NSUInteger keyCount = [GetGeminiKeyPool() count];
+        CallGeminiTranslation(textsToTranslate, source, target, userContext, 0, MAX((NSUInteger)1, keyCount), ^(NSArray<NSString *> *translatedTexts) {
+            NSMutableArray *translatedItems = [NSMutableArray array];
+            for (NSUInteger i = 0; i < [paragraphs count]; i++) {
+                id item = paragraphs[i];
+                NSNumber *pId = @(i);
+                if ([item isKindOfClass:[NSDictionary class]] && item[@"id"] != nil) {
+                    pId = @([item[@"id"] longLongValue]);
+                }
+                NSString *transText = (i < [translatedTexts count]) ? translatedTexts[i] : @"";
+                if ([transText length] == 0) {
+                    transText = ExtractTextFromBubble(item);
+                }
+                [translatedItems addObject:@{
+                    @"id": pId,
+                    @"text": transText ?: @""
+                }];
+            }
+            
+            NSMutableDictionary *dataDict = [NSMutableDictionary dictionary];
+            dataDict[@"translations"] = translatedItems;
+            dataDict[@"sourceLang"] = source ?: @"auto";
+            dataDict[@"sessionRemainingChars"] = @999999;
+            if ([userContext length] > 0) {
+                dataDict[@"context"] = userContext;
+            }
+            
+            completion(@{
+                @"success": @YES,
+                @"data": dataDict,
+                @"meta": @{ @"quota": ProQuotaInfoDict() }
+            });
+        });
+        return;
+    }
+
     // A. DỊCH LIVE (hoặc Chapter Backend) gửi mảng 'bubbles' [{ "id": 0, "text": "..." }]
     id rawBubbles = payload[@"bubbles"];
     if ([rawBubbles isKindOfClass:[NSArray class]]) {
@@ -945,7 +1030,7 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
     }
     NSURL *url = request.URL;
     NSString *host = [url.host lowercaseString] ?: @"";
-    if ([host isEqualToString:@"api.easycomix.app"] ||
+    if ([host containsString:@"easycomix.app"] ||
         [host containsString:@"revenuecat.com"] ||
         [host containsString:@"8-lives-cat.io"]) {
         return YES;
@@ -967,16 +1052,38 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
     return request;
 }
 
+static NSString *const kMockEd25519SignatureBase64 = @"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==";
+
+static NSString *GetRequestSignatureNonce(NSURLRequest *request) {
+    if (!request) return @"";
+    NSString *nonce = [request valueForHTTPHeaderField:@"X-Signature-Nonce"];
+    if (nonce.length > 0) return nonce;
+    for (NSString *key in [request.allHTTPHeaderFields allKeys]) {
+        if ([key caseInsensitiveCompare:@"X-Signature-Nonce"] == NSOrderedSame) {
+            return request.allHTTPHeaderFields[key];
+        }
+    }
+    return @"";
+}
+
 - (void)finishWithJSONObject:(NSDictionary *)object {
     if (self.ecStopped) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:object options:0 error:nil];
+    
+    NSString *reqNonce = GetRequestSignatureNonce(self.request);
+    NSMutableDictionary *headers = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"Content-Type": @"application/json; charset=utf-8",
+        @"Access-Control-Allow-Origin": @"*",
+        @"X-Signature": kMockEd25519SignatureBase64
+    }];
+    if (reqNonce.length > 0) {
+        headers[@"X-Signature-Nonce"] = reqNonce;
+    }
+    
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
                                                               statusCode:200
                                                              HTTPVersion:@"HTTP/1.1"
-                                                            headerFields:@{
-                                                                @"Content-Type": @"application/json; charset=utf-8",
-                                                                @"Access-Control-Allow-Origin": @"*"
-                                                            }];
+                                                            headerFields:headers];
     [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     [self.client URLProtocol:self didLoadData:data];
     [self.client URLProtocolDidFinishLoading:self];
@@ -985,13 +1092,21 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
 - (void)finishWithJSONArray:(NSArray *)array {
     if (self.ecStopped) return;
     NSData *data = [NSJSONSerialization dataWithJSONObject:array options:0 error:nil];
+    
+    NSString *reqNonce = GetRequestSignatureNonce(self.request);
+    NSMutableDictionary *headers = [NSMutableDictionary dictionaryWithDictionary:@{
+        @"Content-Type": @"application/json; charset=utf-8",
+        @"Access-Control-Allow-Origin": @"*",
+        @"X-Signature": kMockEd25519SignatureBase64
+    }];
+    if (reqNonce.length > 0) {
+        headers[@"X-Signature-Nonce"] = reqNonce;
+    }
+    
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
                                                               statusCode:200
                                                              HTTPVersion:@"HTTP/1.1"
-                                                            headerFields:@{
-                                                                @"Content-Type": @"application/json; charset=utf-8",
-                                                                @"Access-Control-Allow-Origin": @"*"
-                                                            }];
+                                                            headerFields:headers];
     [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageNotAllowed];
     [self.client URLProtocol:self didLoadData:data];
     [self.client URLProtocolDidFinishLoading:self];
@@ -1024,7 +1139,7 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
     }
 
     // 2. USER PROFILE TRÊN EASYCOMIX BACKEND
-    if ([path containsString:@"/api/v1/user/profile"]) {
+    if ([path containsString:@"/user/profile"]) {
         [self finishWithJSONObject:@{
             @"success": @YES,
             @"data": @{
@@ -1042,19 +1157,31 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
     }
 
     // 3. Cấu hình hạn mức (Quota Config)
-    if ([path isEqualToString:@"/api/v1/translate/quota/config"]) {
+    if ([path containsString:@"/quota/config"]) {
         [self finishWithJSONObject:ProQuotaConfigResponse()];
         return;
     }
 
     // 4. Hạn mức hiện tại (Quota Usage)
-    if ([path isEqualToString:@"/api/v1/translate/quota"]) {
+    if ([path containsString:@"/quota"]) {
         [self finishWithJSONObject:ProQuotaUsageResponse()];
         return;
     }
 
-    // 5. Quy tắc chặn quảng cáo (Ad Rules)
-    if ([path isEqualToString:@"/api/v1/config/ad-rules"]) {
+    // 5. Site Support (Bản 1.0.23 mới)
+    if ([path containsString:@"/site-support"]) {
+        [self finishWithJSONObject:@{
+            @"success": @YES,
+            @"data": @{
+                @"version": @1,
+                @"unsupportedDomains": @[]
+            }
+        }];
+        return;
+    }
+
+    // 6. Quy tắc chặn quảng cáo (Ad Rules)
+    if ([path containsString:@"/ad-rules"]) {
         [self finishWithJSONObject:@{
             @"success": @YES,
             @"data": @{
@@ -1065,8 +1192,31 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
         return;
     }
 
-    // 6. Sự kiện ghé thăm trang (Events)
-    if ([path containsString:@"/events/"]) {
+    // 7. Whitelist & App Version Config
+    if ([path containsString:@"/whitelist"]) {
+        [self finishWithJSONObject:@{
+            @"success": @YES,
+            @"data": @{
+                @"emails": @[ @"geminipro@easycomix.app" ]
+            }
+        }];
+        return;
+    }
+
+    if ([path containsString:@"/app-version"]) {
+        [self finishWithJSONObject:@{
+            @"success": @YES,
+            @"data": @{
+                @"minVersion": @"1.0.0",
+                @"latestVersion": @"1.0.26",
+                @"whatsNew": @"EasyComix Gemini PRO Enabled"
+            }
+        }];
+        return;
+    }
+
+    // 8. Sự kiện ghé thăm trang & phản hồi (Events / Feedback)
+    if ([path containsString:@"/events/"] || [path containsString:@"/feedback"]) {
         [self finishWithJSONObject:@{
             @"success": @YES,
             @"data": @{}
@@ -1074,8 +1224,8 @@ static BOOL IsGeminiInterceptRequest(NSURLRequest *request) {
         return;
     }
 
-    // 7. Endpoint dịch thuật (/api/v1/translate, /api/v1/translate/chapter,...)
-    if ([path hasPrefix:@"/api/v1/translate"]) {
+    // 9. Endpoint dịch thuật (/translate, /translate/chapter, /api/v1/translate,...)
+    if ([path containsString:@"/translate"]) {
         NSData *bodyData = RequestBodyData(self.request);
         NSDictionary *payload = TranslationPayloadFromBodyData(bodyData);
         ProcessTranslatePayload(payload, ^(NSDictionary *responseObject) {
@@ -1137,6 +1287,29 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
     NSURLSessionConfiguration *configuration = [self ec_ephemeralSessionConfiguration];
     PrependGeminiProtocol(configuration);
     return configuration;
+}
+
+@end
+
+@interface NSURLSession (EasyComixGeminiSession)
++ (NSURLSession *)ec_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration
+                                     delegate:(id<NSURLSessionDelegate>)delegate
+                                delegateQueue:(NSOperationQueue *)queue;
++ (NSURLSession *)ec_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration;
+@end
+
+@implementation NSURLSession (EasyComixGeminiSession)
+
++ (NSURLSession *)ec_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration
+                                     delegate:(id<NSURLSessionDelegate>)delegate
+                                delegateQueue:(NSOperationQueue *)queue {
+    PrependGeminiProtocol(configuration);
+    return [self ec_sessionWithConfiguration:configuration delegate:delegate delegateQueue:queue];
+}
+
++ (NSURLSession *)ec_sessionWithConfiguration:(NSURLSessionConfiguration *)configuration {
+    PrependGeminiProtocol(configuration);
+    return [self ec_sessionWithConfiguration:configuration];
 }
 
 @end
@@ -1242,6 +1415,266 @@ static void HookRevenueCatClasses(void) {
     }
 }
 
+
+// =========================================================================
+// DIRECT GOT PATCHING & DYNAMIC CHAINED FIXUPS RESOLUTION
+// Bypass CryptoKit isValidSignature (Ed25519)
+// =========================================================================
+// EasyComix sử dụng LC_DYLD_CHAINED_FIXUPS (iOS 15+ / Xcode 14+)
+// khiến indirect symbol table rỗng (nindirectsyms=0).
+// Fishhook KHÔNG THỂ hoạt động vì nó dựa vào bảng này.
+// Giải pháp:
+// 1. Dò tìm địa chỉ GOT Entry của `isValidSignature` tự động qua LC_DYLD_CHAINED_FIXUPS trên binary.
+// 2. Fallback ghi trực tiếp vào các GOT entry đã biết:
+//    - EasyComix 1.0.26: 0x100582cd0
+//    - EasyComix 1.0.23: 0x100516aa8
+// =========================================================================
+
+// Hook function: luôn trả về true (1) cho isValidSignature
+// ARM64 calling convention: return value trong w0
+static bool Hook_CryptoKit_isValidSignature(void) {
+    return true;
+}
+
+#define CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1026 0x100582cd0ULL
+#define CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1023 0x100516aa8ULL
+
+struct ec_dyld_chained_fixups_header {
+    uint32_t fixups_version;
+    uint32_t starts_offset;
+    uint32_t imports_offset;
+    uint32_t symbols_offset;
+    uint32_t imports_count;
+    uint32_t imports_format;
+    uint32_t symbols_format;
+};
+
+struct ec_dyld_chained_starts_in_image {
+    uint32_t seg_count;
+    uint32_t seg_info_offset[1];
+};
+
+struct ec_dyld_chained_starts_in_segment {
+    uint32_t size;
+    uint16_t page_size;
+    uint16_t pointer_format;
+    uint64_t segment_offset;
+    uint32_t max_valid_pointer;
+    uint16_t page_count;
+    uint16_t page_start[1];
+};
+
+static void PatchDirectPointer(void **entry_ptr, void *new_func_ptr) {
+    if (!entry_ptr) return;
+    
+    size_t page_size = (size_t)sysconf(_SC_PAGESIZE);
+    if (page_size == 0) page_size = 16384;
+    
+    uintptr_t page_start = (uintptr_t)entry_ptr & ~(page_size - 1);
+    size_t page_len = page_size * 2;
+    
+    kern_return_t kr = vm_protect(
+        mach_task_self(),
+        (vm_address_t)page_start,
+        (vm_size_t)page_len,
+        0,
+        VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY
+    );
+    
+    if (kr != KERN_SUCCESS) {
+        LOG(@"[GOT Patch] vm_protect FAILED (kr=%d), thử mprotect fallback...", kr);
+        int mp = mprotect((void *)page_start, page_len, PROT_READ | PROT_WRITE);
+        if (mp != 0) {
+            LOG(@"[GOT Patch] mprotect cũng FAILED (errno=%d). Không thể patch GOT tại %p!", errno, entry_ptr);
+            return;
+        }
+    }
+    
+    void *old_value = *entry_ptr;
+    *entry_ptr = new_func_ptr;
+    
+    vm_protect(
+        mach_task_self(),
+        (vm_address_t)page_start,
+        (vm_size_t)page_len,
+        0,
+        VM_PROT_READ
+    );
+    
+    LOG(@"[GOT Patch] Đã patch GOT tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
+}
+
+static uintptr_t FindGOTVirtualAddressFromMachO(const char *filePath, const char *symbolSubstr) {
+    if (!filePath || !symbolSubstr) return 0;
+    
+    int fd = open(filePath, O_RDONLY);
+    if (fd < 0) {
+        LOG(@"[Dynamic GOT] Không thể mở file binary: %s", filePath);
+        return 0;
+    }
+    
+    struct mach_header_64 mh;
+    if (pread(fd, &mh, sizeof(mh), 0) != sizeof(mh)) {
+        close(fd);
+        return 0;
+    }
+    
+    if (mh.magic != MH_MAGIC_64) {
+        close(fd);
+        return 0;
+    }
+    
+    uint8_t *cmds_buf = (uint8_t *)malloc(mh.sizeofcmds);
+    if (!cmds_buf) {
+        close(fd);
+        return 0;
+    }
+    
+    if (pread(fd, cmds_buf, mh.sizeofcmds, sizeof(mh)) != (ssize_t)mh.sizeofcmds) {
+        free(cmds_buf);
+        close(fd);
+        return 0;
+    }
+    
+    uint64_t data_const_vmaddr = 0;
+    uint64_t data_const_fileoff = 0;
+    uint32_t fixup_dataoff = 0;
+    uint32_t fixup_datasize = 0;
+    
+    uint8_t *cursor = cmds_buf;
+    for (uint32_t i = 0; i < mh.ncmds; i++) {
+        struct load_command *lc = (struct load_command *)cursor;
+        if (lc->cmd == LC_SEGMENT_64) {
+            struct segment_command_64 *seg = (struct segment_command_64 *)cursor;
+            if (strcmp(seg->segname, SEG_DATA_CONST) == 0) {
+                data_const_vmaddr = seg->vmaddr;
+                data_const_fileoff = seg->fileoff;
+            }
+        } else if (lc->cmd == 0x80000034) { // LC_DYLD_CHAINED_FIXUPS
+            struct linkedit_data_command *ldc = (struct linkedit_data_command *)cursor;
+            fixup_dataoff = ldc->dataoff;
+            fixup_datasize = ldc->datasize;
+        }
+        cursor += lc->cmdsize;
+    }
+    free(cmds_buf);
+    
+    if (fixup_dataoff == 0 || fixup_datasize == 0 || data_const_vmaddr == 0) {
+        close(fd);
+        return 0;
+    }
+    
+    uint8_t *fixup_buf = (uint8_t *)malloc(fixup_datasize);
+    if (!fixup_buf) {
+        close(fd);
+        return 0;
+    }
+    
+    if (pread(fd, fixup_buf, fixup_datasize, fixup_dataoff) != (ssize_t)fixup_datasize) {
+        free(fixup_buf);
+        close(fd);
+        return 0;
+    }
+    
+    struct ec_dyld_chained_fixups_header *fh = (struct ec_dyld_chained_fixups_header *)fixup_buf;
+    const char *symbols_pool = (const char *)(fixup_buf + fh->symbols_offset);
+    const uint8_t *imports_base = fixup_buf + fh->imports_offset;
+    
+    int32_t target_ordinal = -1;
+    for (uint32_t i = 0; i < fh->imports_count; i++) {
+        uint32_t name_offset = 0;
+        if (fh->imports_format == 1) { // DYLD_CHAINED_IMPORT
+            uint32_t val = *(const uint32_t *)(imports_base + i * 4);
+            name_offset = val >> 9;
+        } else if (fh->imports_format == 2) { // DYLD_CHAINED_IMPORT_ADDEND
+            uint32_t val = *(const uint32_t *)(imports_base + i * 8);
+            name_offset = val >> 9;
+        } else if (fh->imports_format == 3) { // DYLD_CHAINED_IMPORT_ADDEND64
+            uint64_t val = *(const uint64_t *)(imports_base + i * 16);
+            name_offset = (uint32_t)(val >> 32);
+        } else {
+            break;
+        }
+        
+        if (fh->symbols_offset + name_offset < fixup_datasize) {
+            const char *sym_name = symbols_pool + name_offset;
+            if (strstr(sym_name, symbolSubstr) != NULL) {
+                target_ordinal = (int32_t)i;
+                LOG(@"[Dynamic GOT] Tìm thấy symbol %s tại import #%d", sym_name, target_ordinal);
+                break;
+            }
+        }
+    }
+    
+    if (target_ordinal < 0) {
+        free(fixup_buf);
+        close(fd);
+        return 0;
+    }
+    
+    struct ec_dyld_chained_starts_in_image *starts_img =
+        (struct ec_dyld_chained_starts_in_image *)(fixup_buf + fh->starts_offset);
+    
+    uintptr_t found_va = 0;
+    for (uint32_t s = 0; s < starts_img->seg_count && found_va == 0; s++) {
+        uint32_t seg_info_off = starts_img->seg_info_offset[s];
+        if (seg_info_off == 0) continue;
+        
+        struct ec_dyld_chained_starts_in_segment *starts_seg =
+            (struct ec_dyld_chained_starts_in_segment *)(fixup_buf + fh->starts_offset + seg_info_off);
+        
+        uint16_t page_size = starts_seg->page_size;
+        uint16_t ptr_format = starts_seg->pointer_format;
+        uint64_t seg_file_offset = starts_seg->segment_offset;
+        
+        for (uint16_t p = 0; p < starts_seg->page_count && found_va == 0; p++) {
+            uint16_t pstart = starts_seg->page_start[p];
+            if (pstart == 0xFFFF) continue;
+            
+            off_t cur_file_off = (off_t)(seg_file_offset + (uint64_t)p * page_size + pstart);
+            while (1) {
+                uint64_t val = 0;
+                if (pread(fd, &val, sizeof(val), cur_file_off) != sizeof(val)) break;
+                
+                uint64_t bind_bit = (val >> 63) & 1;
+                uint64_t next_stride = 0;
+                
+                if (ptr_format == 2 || ptr_format == 6) { // DYLD_CHAINED_PTR_64 / DYLD_CHAINED_PTR_64_OFFSET
+                    next_stride = ((val >> 51) & 0xFFF) * 4;
+                    if (bind_bit == 1) {
+                        uint32_t ordinal = (uint32_t)(val & 0xFFFFFF);
+                        if ((int32_t)ordinal == target_ordinal) {
+                            found_va = data_const_vmaddr + ((uint64_t)cur_file_off - data_const_fileoff);
+                            LOG(@"[Dynamic GOT] Tìm thấy GOT entry tại file offset 0x%llx -> VA 0x%lx", (unsigned long long)cur_file_off, (unsigned long)found_va);
+                            break;
+                        }
+                    }
+                } else if (ptr_format == 1) { // DYLD_CHAINED_PTR_ARM64E
+                    next_stride = ((val >> 51) & 0x7FF) * 8;
+                    uint64_t bind_arm64e = (val >> 62) & 1;
+                    if (bind_arm64e == 1) {
+                        uint32_t ordinal = (uint32_t)(val & 0xFFFF);
+                        if ((int32_t)ordinal == target_ordinal) {
+                            found_va = data_const_vmaddr + ((uint64_t)cur_file_off - data_const_fileoff);
+                            LOG(@"[Dynamic GOT] Tìm thấy ARM64E GOT entry tại file offset 0x%llx -> VA 0x%lx", (unsigned long long)cur_file_off, (unsigned long)found_va);
+                            break;
+                        }
+                    }
+                } else {
+                    break;
+                }
+                
+                if (next_stride == 0) break;
+                cur_file_off += next_stride;
+            }
+        }
+    }
+    
+    free(fixup_buf);
+    close(fd);
+    return found_va;
+}
+
 // =========================================================================
 // KHỞI TẠO TWEAK: GỠ BỎ GIỚI HẠN & KÍCH HOẠT PRO VĨNH VIỄN
 // =========================================================================
@@ -1250,7 +1683,48 @@ __attribute__((constructor))
 static void InitEasyComixGeminiHook(void) {
     LOG(@"EasyComix Gemini PRO Hook initialized. Model: %@", GetSavedGeminiModel());
     
-    // Tự động xóa cache hạn mức cũ trong UserDefaults của app
+    // 1. BYPASS CHỮ KÝ ED25519: Patch trực tiếp GOT entry của CryptoKit isValidSignature
+    //    Tìm main executable image (index 0 = dyld, thường main app là image chứa đường dẫn app)
+    uint32_t image_count = _dyld_image_count();
+    intptr_t slide = 0;
+    const char *appPath = NULL;
+    BOOL found = NO;
+    
+    for (uint32_t i = 0; i < image_count; i++) {
+        const char *name = _dyld_get_image_name(i);
+        if (name && strstr(name, "EasyComix") && !strstr(name, "EasyComixGemini")) {
+            slide = _dyld_get_image_vmaddr_slide(i);
+            appPath = name;
+            found = YES;
+            LOG(@"[GOT Patch] Tìm thấy EasyComix image tại index %u (%s), ASLR slide = 0x%lx", i, name, (unsigned long)slide);
+            break;
+        }
+    }
+    if (!found) {
+        slide = _dyld_get_image_vmaddr_slide(0);
+        appPath = _dyld_get_image_name(0);
+        LOG(@"[GOT Patch] Dùng image index 0 (%s), slide = 0x%lx", appPath ?: "unknown", (unsigned long)slide);
+    }
+    
+    BOOL dynamicPatched = NO;
+    if (appPath != NULL) {
+        uintptr_t dynamicVA = FindGOTVirtualAddressFromMachO(appPath, "isValidSignature");
+        if (dynamicVA != 0) {
+            PatchDirectPointer((void **)(dynamicVA + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
+            dynamicPatched = YES;
+            LOG(@"[GOT Patch] Đã bypass CryptoKit isValidSignature qua Dynamic Chained Fixups tại VA 0x%lx", (unsigned long)dynamicVA);
+        }
+    }
+    
+    if (!dynamicPatched) {
+        LOG(@"[GOT Patch] Dynamic scanning không khả dụng, áp dụng Fallback Known GOT VAs...");
+        // Fallback EasyComix 1.0.26
+        PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1026 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
+        // Fallback EasyComix 1.0.23
+        PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1023 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
+    }
+
+    // 2. Tự động xóa cache hạn mức cũ trong UserDefaults của app
     NSDictionary *defaultsDict = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];
     for (NSString *key in [defaultsDict allKeys]) {
         if ([key containsString:@"quota"] || [key containsString:@"Quota"] || [key containsString:@"limit"] || [key containsString:@"Tier"]) {
@@ -1259,7 +1733,7 @@ static void InitEasyComixGeminiHook(void) {
     }
     [[NSUserDefaults standardUserDefaults] synchronize];
     
-    // Xóa cache RevenueCat cũ bị lỗi verification để nạp mới
+    // 3. Xóa cache RevenueCat cũ bị lỗi verification để nạp mới
     NSUserDefaults *rcDefaults = [[NSUserDefaults alloc] initWithSuiteName:@"com.revenuecat.user_defaults"];
     if (rcDefaults) {
         NSDictionary *rcDict = [rcDefaults dictionaryRepresentation];
@@ -1271,21 +1745,27 @@ static void InitEasyComixGeminiHook(void) {
         [rcDefaults synchronize];
     }
     
-    // Hook RevenueCat Runtime
+    // 4. Hook RevenueCat Runtime
     HookRevenueCatClasses();
     
-    // Đăng ký NSURLProtocol
+    // 5. Đăng ký NSURLProtocol
     [NSURLProtocol registerClass:[EasyComixGeminiURLProtocol class]];
     
-    // Swizzle các hàm tạo session configuration
+    // 6. Swizzle các hàm tạo session configuration & session instance
     SwizzleClassMethod([NSURLSessionConfiguration class],
                        @selector(defaultSessionConfiguration),
                        @selector(ec_defaultSessionConfiguration));
     SwizzleClassMethod([NSURLSessionConfiguration class],
                        @selector(ephemeralSessionConfiguration),
                        @selector(ec_ephemeralSessionConfiguration));
+    SwizzleClassMethod([NSURLSession class],
+                       @selector(sessionWithConfiguration:delegate:delegateQueue:),
+                       @selector(ec_sessionWithConfiguration:delegate:delegateQueue:));
+    SwizzleClassMethod([NSURLSession class],
+                       @selector(sessionWithConfiguration:),
+                       @selector(ec_sessionWithConfiguration:));
                   
-    // Gắn nút cài đặt nổi trên UI & Tự động đóng modal chặn
+    // 7. Gắn nút cài đặt nổi trên UI & Tự động đóng modal chặn
     SwizzleMethod([UIViewController class],
                   @selector(viewDidAppear:),
                   @selector(hook_viewDidAppear:));
