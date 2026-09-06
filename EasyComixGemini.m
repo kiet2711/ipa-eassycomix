@@ -7,6 +7,8 @@
 #import <mach-o/loader.h>
 #import <mach-o/nlist.h>
 #import <mach/mach.h>
+#import <mach/mach_vm.h>
+#import <mach/vm_map.h>
 #import <sys/mman.h>
 #import <dlfcn.h>
 #import <unistd.h>
@@ -1471,37 +1473,78 @@ static void PatchDirectPointer(void **entry_ptr, void *new_func_ptr) {
     if (page_size == 0) page_size = 16384;
     
     uintptr_t page_start = (uintptr_t)entry_ptr & ~(page_size - 1);
-    size_t page_len = page_size * 2;
+    mach_port_t task = mach_task_self();
     
+    // Phương pháp 1: vm_protect trực tiếp (bỏ VM_PROT_COPY vì XNU kernel hiện đại từ chối cờ này)
     kern_return_t kr = vm_protect(
-        mach_task_self(),
+        task,
         (vm_address_t)page_start,
-        (vm_size_t)page_len,
+        (vm_size_t)page_size,
         0,
-        VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY
+        VM_PROT_READ | VM_PROT_WRITE
     );
     
-    if (kr != KERN_SUCCESS) {
-        LOG(@"[GOT Patch] vm_protect FAILED (kr=%d), thử mprotect fallback...", kr);
-        int mp = mprotect((void *)page_start, page_len, PROT_READ | PROT_WRITE);
-        if (mp != 0) {
-            LOG(@"[GOT Patch] mprotect cũng FAILED (errno=%d). Không thể patch GOT tại %p!", errno, entry_ptr);
-            return;
-        }
+    if (kr == KERN_SUCCESS) {
+        void *old_value = *entry_ptr;
+        *entry_ptr = new_func_ptr;
+        vm_protect(task, (vm_address_t)page_start, (vm_size_t)page_size, 0, VM_PROT_READ);
+        LOG(@"[GOT Patch] vm_protect thành công tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
+        return;
     }
     
-    void *old_value = *entry_ptr;
-    *entry_ptr = new_func_ptr;
-    
-    vm_protect(
-        mach_task_self(),
-        (vm_address_t)page_start,
-        (vm_size_t)page_len,
+    // Phương pháp 2: mach_vm_remap alias (tạo mapping ghi tạm thời đến cùng physical page)
+    mach_vm_address_t remap_addr = 0;
+    vm_prot_t cur_prot = 0, max_prot = 0;
+    kr = mach_vm_remap(
+        task,
+        &remap_addr,
+        (mach_vm_size_t)page_size,
         0,
-        VM_PROT_READ
+        VM_FLAGS_ANYWHERE,
+        task,
+        (mach_vm_address_t)page_start,
+        FALSE,
+        &cur_prot,
+        &max_prot,
+        VM_INHERIT_NONE
     );
     
-    LOG(@"[GOT Patch] Đã patch GOT tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
+    if (kr == KERN_SUCCESS) {
+        kr = vm_protect(task, (vm_address_t)remap_addr, (vm_size_t)page_size, 0, VM_PROT_READ | VM_PROT_WRITE);
+        if (kr == KERN_SUCCESS) {
+            uintptr_t offset = (uintptr_t)entry_ptr - page_start;
+            void **alias_ptr = (void **)(remap_addr + offset);
+            void *old_value = *alias_ptr;
+            *alias_ptr = new_func_ptr;
+            LOG(@"[GOT Patch] mach_vm_remap alias thành công tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
+        }
+        vm_deallocate(task, (vm_address_t)remap_addr, (vm_size_t)page_size);
+        if (kr == KERN_SUCCESS) return;
+    }
+    
+    // Phương pháp 3: vm_write (Mach kernel primitive)
+    kr = vm_write(
+        task,
+        (vm_address_t)entry_ptr,
+        (vm_offset_t)&new_func_ptr,
+        (mach_msg_type_number_t)sizeof(void *)
+    );
+    if (kr == KERN_SUCCESS) {
+        LOG(@"[GOT Patch] vm_write thành công tại %p -> %p", entry_ptr, new_func_ptr);
+        return;
+    }
+    
+    // Phương pháp 4: mprotect POSIX fallback
+    int mp = mprotect((void *)page_start, page_size, PROT_READ | PROT_WRITE);
+    if (mp == 0) {
+        void *old_value = *entry_ptr;
+        *entry_ptr = new_func_ptr;
+        mprotect((void *)page_start, page_size, PROT_READ);
+        LOG(@"[GOT Patch] mprotect thành công tại %p: %p -> %p", entry_ptr, old_value, new_func_ptr);
+        return;
+    }
+    
+    LOG(@"[GOT Patch] CẢNH BÁO: Tất cả kỹ thuật memory patch đều thất bại tại %p (kr=%d, errno=%d).", entry_ptr, kr, errno);
 }
 
 static uintptr_t FindGOTVirtualAddressFromMachO(const char *filePath, const char *symbolSubstr) {
@@ -1716,13 +1759,10 @@ static void InitEasyComixGeminiHook(void) {
         }
     }
     
-    if (!dynamicPatched) {
-        LOG(@"[GOT Patch] Dynamic scanning không khả dụng, áp dụng Fallback Known GOT VAs...");
-        // Fallback EasyComix 1.0.26
-        PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1026 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
-        // Fallback EasyComix 1.0.23
-        PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1023 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
-    }
+    // Luôn luôn áp dụng Known GOT VAs dự phòng để bảo đảm 100% không sót
+    LOG(@"[GOT Patch] Áp dụng Known GOT VAs dự phòng (1.0.26: 0x%llx, 1.0.23: 0x%llx)...", (unsigned long long)CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1026, (unsigned long long)CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1023);
+    PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1026 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
+    PatchDirectPointer((void **)(CRYPTOKIT_ISVALIDSIGNATURE_GOT_VA_1023 + (uintptr_t)slide), (void *)Hook_CryptoKit_isValidSignature);
 
     // 2. Tự động xóa cache hạn mức cũ trong UserDefaults của app
     NSDictionary *defaultsDict = [[NSUserDefaults standardUserDefaults] dictionaryRepresentation];

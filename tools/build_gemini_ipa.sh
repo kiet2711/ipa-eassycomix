@@ -48,6 +48,7 @@ xcrun --sdk iphoneos clang \
   -o "$DYLIB"
 
 /usr/bin/codesign --remove-signature "$EXECUTABLE" 2>/dev/null || true
+python3 "$ROOT_DIR/tools/patch_binary.py" "$EXECUTABLE"
 python3 "$ROOT_DIR/tools/inject_dylib.py" \
   "$EXECUTABLE" \
   '@executable_path/Frameworks/EasyComixGemini.dylib'
