@@ -126,9 +126,11 @@ Do file IPA xuất ra là bản **Unsigned** (chưa ký), bạn cần ký lại 
 ├── Payload/                      # Thư mục ứng dụng EasyComix gốc đã giải mã
 │   └── EasyComix.app/
 ├── tools/
-│   ├── build_gemini_ipa.sh       # Script biên dịch dylib, inject và đóng gói IPA
+│   ├── build_gemini_ipa.sh       # Script biên dịch dylib, patch binary, inject và đóng gói IPA
+│   ├── patch_binary.py           # Script vá mã máy (Assembly ARM64) bypass chữ ký CryptoKit
 │   └── inject_dylib.py          # Script chèn LC_LOAD_DYLIB vào Mach-O binary
 ├── EasyComixGemini.m             # Mã nguồn Tweak Hook (C/Objective-C)
+├── UPGRADE_GUIDE.md              # Tài liệu kỹ thuật chi tiết & Hướng dẫn bảo trì/nâng cấp cho AI
 ├── BUILD_GEMINI_IPA.md           # Hướng dẫn build tóm tắt
 ├── link shortcut.txt             # Link Apple Shortcut dịch truyện
 └── README.md                     # Tài liệu hướng dẫn chính
