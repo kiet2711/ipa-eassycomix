@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 INPUT_PATH="${1:-$ROOT_DIR}"
 OUTPUT_IPA="${2:-$ROOT_DIR/EasyComix-Gemini-unsigned.ipa}"
+APP_GROUP="${APP_GROUP:-group.7RS63NZFBW.cvN}"
 BUILD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/easycomix-gemini.XXXXXX")"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 
@@ -47,8 +48,19 @@ xcrun --sdk iphoneos clang \
   -install_name '@rpath/EasyComixGemini.dylib' \
   -o "$DYLIB"
 
+# Patch Broadcast Extension (ReplayKit Live Translate App Group)
+BROADCAST_APPEX="$APP_DIR/PlugIns/EasyComixBroadcast.appex"
+if [[ -d "$BROADCAST_APPEX" ]]; then
+  BROADCAST_EXECUTABLE="$BROADCAST_APPEX/EasyComixBroadcast"
+  if [[ -f "$BROADCAST_EXECUTABLE" ]]; then
+    /usr/bin/codesign --remove-signature "$BROADCAST_EXECUTABLE" 2>/dev/null || true
+    python3 "$ROOT_DIR/tools/patch_binary.py" "$BROADCAST_EXECUTABLE" --app-group "$APP_GROUP" --skip-crypto
+  fi
+fi
+
+# Patch Main Executable
 /usr/bin/codesign --remove-signature "$EXECUTABLE" 2>/dev/null || true
-python3 "$ROOT_DIR/tools/patch_binary.py" "$EXECUTABLE"
+python3 "$ROOT_DIR/tools/patch_binary.py" "$EXECUTABLE" --app-group "$APP_GROUP"
 python3 "$ROOT_DIR/tools/inject_dylib.py" \
   "$EXECUTABLE" \
   '@executable_path/Frameworks/EasyComixGemini.dylib'

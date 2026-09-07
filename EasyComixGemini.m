@@ -1314,6 +1314,32 @@ static void SwizzleClassMethod(Class cls, SEL origSel, SEL newSel) {
 
 @end
 
+// =========================================================================
+// SWIZZLE NSFILEMANAGER: CHUYỂN HƯỚNG APP GROUP (HỖ TRỢ DỊCH LIVE / LIVE TRANSLATE)
+// =========================================================================
+
+static NSString * const kOriginalAppGroup = @"group.app.easycomix";
+static NSString * const kTargetAppGroup = @"group.7RS63NZFBW.cvN";
+
+@interface NSFileManager (EasyComixAppGroup)
+- (NSURL *)ec_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier;
+@end
+
+@implementation NSFileManager (EasyComixAppGroup)
+
+- (NSURL *)ec_containerURLForSecurityApplicationGroupIdentifier:(NSString *)groupIdentifier {
+    if ([groupIdentifier isEqualToString:kOriginalAppGroup]) {
+        NSURL *newURL = [self ec_containerURLForSecurityApplicationGroupIdentifier:kTargetAppGroup];
+        if (newURL) {
+            LOG(@"[AppGroup Redirect] Chuyển hướng App Group từ %@ sang %@", groupIdentifier, kTargetAppGroup);
+            return newURL;
+        }
+    }
+    return [self ec_containerURLForSecurityApplicationGroupIdentifier:groupIdentifier];
+}
+
+@end
+
 @interface UIViewController (EasyComixHook)
 @end
 
@@ -1777,4 +1803,9 @@ static void InitEasyComixGeminiHook(void) {
     SwizzleMethod([UIViewController class],
                   @selector(viewDidAppear:),
                   @selector(hook_viewDidAppear:));
+                  
+    // 8. Swizzle NSFileManager containerURLForSecurityApplicationGroupIdentifier: (Dự phòng Live Translate)
+    SwizzleMethod([NSFileManager class],
+                  @selector(containerURLForSecurityApplicationGroupIdentifier:),
+                  @selector(ec_containerURLForSecurityApplicationGroupIdentifier:));
 }

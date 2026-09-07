@@ -93,8 +93,13 @@ Script sẽ tự động:
 
 Do file IPA xuất ra là bản **Unsigned** (chưa ký), bạn cần ký lại trước khi cài đặt:
 
-- **TrollStore** (iOS 14.0 – 17.0): Cài trực tiếp file IPA mà không cần chứng chỉ.
-- **ESign / GBox / Scarlet**: Ký trực tiếp trên thiết bị bằng chứng chỉ cá nhân hoặc P12. *(Lưu ý: Bật tùy chọn ký kèm Frameworks/Dylib nhúng).*
+- **TrollStore** (iOS 14.0 – 17.0): Cài trực tiếp file IPA mà không cần chứng chỉ (hỗ trợ 100% tính năng Dịch thường & Dịch Live).
+- **ESign / GBox / Scarlet / zsign**: Ký trực tiếp bằng chứng chỉ cá nhân hoặc P12.
+  > [!IMPORTANT]
+  > **Để tính năng Dịch Live (Quay màn hình / Live Translate) hoạt động khi ký lại:**
+  > 1. Tuyệt đối **TẮT** tùy chọn *"Xóa PlugIn / Extension"* (hoặc *"Remove PlugIns"*).
+  > 2. Tuyệt đối **TẮT** tùy chọn *"Xóa embedded.mobileprovision sau khi ký"*.
+  > 3. Ký kèm file cấu hình [tools/entitlements.plist](file:///d:/ipa/tools/entitlements.plist) có chứa App Group `group.7RS63NZFBW.cvN`.
 - **Sideloadly / AltStore**: Cài đặt qua máy tính bằng Apple ID cá nhân.
 
 ---

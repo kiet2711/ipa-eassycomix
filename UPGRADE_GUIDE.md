@@ -73,19 +73,38 @@ File `EasyComixGemini.m` sử dụng **Objective-C Runtime Method Swizzling** ca
 
 ---
 
-## 5. Tính năng "Dịch Live" (Quay màn hình) & Hạn chế
+## 5. Tính năng "Dịch Live" (Quay màn hình) & Giải pháp App Group Patch
 
-* **Cách hoạt động**: EasyComix sử dụng ReplayKit Extension (`Payload/EasyComix.app/PlugIns/EasyComixBroadcast.appex`). Extension chụp ảnh màn hình ➔ lưu vào App Group `group.app.easycomix` ➔ thông báo cho app chính đọc ảnh và hiển thị bản dịch lên cửa sổ nổi **Picture-in-Picture (PiP)**.
-* **Hạn chế khi Sideload / Esign**:
-  * App Group yêu cầu Team ID trong provisioning profile phải trùng khớp với Team ID gốc (`S465Y7V68Z`).
-  * Khi ký bằng chứng chỉ mua doanh nghiệp (Team ID khác), iOS Sandbox sẽ chặn quyền truy cập `group.app.easycomix` (trả về `nil`).
-  * **Hậu quả**: Chức năng quay màn hình vẫn chạy, nhưng ảnh không gửi sang app chính được nên không hiện chữ dịch.
-  * **Môi trường hỗ trợ 100% Dịch Live**: Chỉ chạy được trên **App gốc App Store** hoặc thiết bị cài qua **TrollStore** (do TrollStore có khả năng fake quyền App Group).
-* **Lưu ý khi ký trên Esign**:
-  * Tuyệt đối **TẮT** mục `"Xóa embedded.mobileprovision sau ký"`. Nếu bật, iOS sẽ xóa profile khiến Extension bị tước toàn bộ quyền.
-  * Giữ **TẮT** `"Xóa tất cả plugin"`.
-
----
+* **Cách hoạt động**: EasyComix sử dụng ReplayKit Extension (`Payload/EasyComix.app/PlugIns/EasyComixBroadcast.appex`). Extension chụp ảnh màn hình ➔ lưu vào App Group dùng chung ➔ gửi thông báo Darwin Notification ➔ App chính đọc ảnh từ App Group và hiển thị bản dịch lên cửa sổ nổi **Picture-in-Picture (PiP)**.
+* **Nguyên nhân lỗi khi Sideload / ESign**:
+  * App Group gốc là `group.app.easycomix` thuộc Developer Team gốc `S465Y7V68Z`.
+  * Khi ký lại bằng chứng chỉ khác (ví dụ Team ID `7RS63NZFBW`), iOS Sandbox chặn quyền truy cập App Group này khiến `containerURLForSecurityApplicationGroupIdentifier:` trả về `nil`.
+* **Giải pháp Patch toàn diện (Đã tích hợp trong `tools/patch_binary.py` và `EasyComixGemini.m`)**:
+  1. **Patch mã máy Swift ARM64 & Chuỗi dữ liệu**:
+     * App Group mặc định được đổi sang: `group.7RS63NZFBW.cvN` (20 ký tự).
+     * `Payload/EasyComix.app/EasyComix`:
+       - Offset `0x468b00`: Ghi đè chuỗi `group.7RS63NZFBW.cvN\0` (trong slot 32-byte).
+       - Offset `0x24c3a4`: Sửa lệnh nạp độ dài Swift String từ `mov x0, #19` (`60 02 80 d2`) thành `mov x0, #20` (`80 02 80 d2`).
+     * `Payload/EasyComix.app/PlugIns/EasyComixBroadcast.appex/EasyComixBroadcast`:
+       - Offset `0x65f0`: Ghi đè chuỗi `group.7RS63NZFBW.cvN\0`.
+       - Offset `0x40a8`: Sửa lệnh nạp độ dài Swift String từ `mov x0, #19` (`60 02 80 d2`) thành `mov x0, #20` (`80 02 80 d2`).
+  2. **Runtime Defense (Dự phòng trong Dylib)**:
+     * `EasyComixGemini.m` swizzle `containerURLForSecurityApplicationGroupIdentifier:` để tự động chuyển hướng mọi yêu cầu từ `group.app.easycomix` sang `group.7RS63NZFBW.cvN`.
+* **Hướng dẫn cấu hình khi ký trên ESign / GBox / zsign**:
+  * **TUYỆT ĐỐI KHÔNG BẬT**: *"Xóa PlugIn / Extension"* (giữ lại `EasyComixBroadcast.appex`).
+  * **TUYỆT ĐỐI TẮT**: *"Xóa embedded.mobileprovision sau ký"*.
+  * **Entitlements**: Sử dụng file mẫu [tools/entitlements.plist](file:///d:/ipa/tools/entitlements.plist) chứa:
+    ```xml
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.7RS63NZFBW.cvN</string>
+    </array>
+    <key>com.apple.developer.kernel.increased-memory-limit</key>
+    <true/>
+    ```
+* **Môi trường hỗ trợ**:
+  * **TrollStore (iOS 14 - 17.0)**: Chạy 100% không cần chứng chỉ.
+  * **ESign / Sideload có chứng chỉ hỗ trợ App Groups (như cert 7RS63NZFBW)**: Chạy 100% Live Translate sau khi áp dụng bản patch trên.
 
 ## 6. Quy trình từng bước nâng cấp khi App ra bản mới (1.0.27+)
 
