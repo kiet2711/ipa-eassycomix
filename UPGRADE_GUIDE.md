@@ -106,6 +106,20 @@ File `EasyComixGemini.m` sử dụng **Objective-C Runtime Method Swizzling** ca
   * **TrollStore (iOS 14 - 17.0)**: Chạy 100% không cần chứng chỉ.
   * **ESign / Sideload có chứng chỉ hỗ trợ App Groups (như cert 7RS63NZFBW)**: Chạy 100% Live Translate sau khi áp dụng bản patch trên.
 
+### 5.1. Hướng dẫn khi đổi sang Chứng chỉ mới (New Certificate)
+
+Khi bạn mua hoặc đổi sang một chứng chỉ mới (Team ID khác):
+1. **Kiểm tra file `.mobileprovision` mới:** Mở file provision mới (hoặc nhờ kiểm tra) xem có chứa entitlement `com.apple.security.application-groups` hay không, và chọn ra 1 App Group có độ dài **≤ 31 ký tự** (ví dụ: `group.<TEAM_ID>.<NAME>`).
+2. **Cập nhật App Group mới vào 3 file trong repo:**
+   - **`EasyComixGemini.m`**: Đổi chuỗi tại dòng `static NSString * const kTargetAppGroup = @"group.MỚI";`
+   - **`tools/build_gemini_ipa.sh`**: Đổi biến `APP_GROUP="${APP_GROUP:-group.MỚI}"`
+   - **`tools/entitlements.plist`**: Đổi giá trị trong thẻ `<string>group.MỚI</string>`
+   - *(Tùy chọn)* **`tools/patch_binary.py`**: Đổi `DEFAULT_APP_GROUP = "group.MỚI"`
+3. **Commit & Push lên GitHub:** Actions sẽ tự động patch lại cả Main App và Extension sang App Group mới và tạo file IPA mới.
+4. **Ký trên ESign:** Nhập provision mới, giữ nguyên Extension và dùng `tools/entitlements.plist` mới để ký.
+
+---
+
 ## 6. Quy trình từng bước nâng cấp khi App ra bản mới (1.0.27+)
 
 Khi có bản cập nhật mới từ App Store:
